@@ -24,7 +24,7 @@ python3 tools/pe_resources.py data/disc/A-10Cuba/A10Cuba.exe --type DIB --name B
 ./build/a10-bitmap-viewer data/badges.bmp
 ```
 
-The extractor refuses to overwrite an existing output. For a headless rendered snapshot, run `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/a10-bitmap-viewer data/badges.bmp --snapshot data/rendered.bmp`. The snapshot command overwrites its output if it exists. The probe uses SDL's BMP loader and texture conversion; it does not yet reproduce DirectDraw surface behavior or run simulation code.
+The extractor refuses to overwrite an existing output. For a headless rendered snapshot, run `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/a10-bitmap-viewer data/badges.bmp --snapshot data/rendered.bmp`. The snapshot command overwrites its output if it exists. For indexed BMPs the probe copies pixels into a pitch-aware 8-bit surface, applies the source palette, and converts to RGBA32 when uploading to an SDL texture. It does not yet reproduce the complete DirectDraw interface or run simulation code.
 
 ## Extract the disc
 

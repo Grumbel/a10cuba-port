@@ -1,3 +1,4 @@
+#include "indexed_surface.h"
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -25,6 +26,7 @@ int main(int argc, char **argv)
     SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
     SDL_Texture *texture = NULL;
+    IndexedSurface indexed = {0};
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         return fail("SDL_Init");
@@ -47,7 +49,26 @@ int main(int argc, char **argv)
         fail("SDL_CreateRenderer");
         goto cleanup;
     }
-    texture = SDL_CreateTextureFromSurface(renderer, bitmap);
+    if (bitmap->format == SDL_PIXELFORMAT_INDEX8) {
+        SDL_Palette *palette = SDL_GetSurfacePalette(bitmap);
+        if (!palette || !indexed_surface_init(&indexed, bitmap->w, bitmap->h) ||
+            !indexed_surface_set_palette(&indexed, palette->colors, 0, palette->ncolors)) {
+            fail("Create indexed surface");
+            goto cleanup;
+        }
+        for (int y = 0; y < bitmap->h; ++y) {
+            memcpy((Uint8 *)indexed.surface->pixels + y * indexed.surface->pitch,
+                   (Uint8 *)bitmap->pixels + y * bitmap->pitch, (size_t)bitmap->w);
+        }
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                    SDL_TEXTUREACCESS_STREAMING, bitmap->w, bitmap->h);
+        if (!texture || !indexed_surface_upload(&indexed, texture)) {
+            fail("Upload indexed surface");
+            goto cleanup;
+        }
+    } else {
+        texture = SDL_CreateTextureFromSurface(renderer, bitmap);
+    }
     if (!texture) {
         fail("SDL_CreateTextureFromSurface");
         goto cleanup;
@@ -91,6 +112,7 @@ int main(int argc, char **argv)
 cleanup:
     SDL_DestroySurface(capture);
     SDL_DestroyTexture(texture);
+    indexed_surface_destroy(&indexed);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_DestroySurface(bitmap);
