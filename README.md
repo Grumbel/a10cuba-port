@@ -6,6 +6,23 @@ This project is an initial investigation toward a native Linux port. The origina
 
 Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to test the PE resource reader.
 
+## Run the original game in Wine
+
+On x86-64 Linux, run from this repository directory:
+
+```sh
+nix run .#a10-cube-wine
+```
+
+On first run, the launcher uses `data/disc/` if it has been extracted, or the original ISO in the parent workspace directory. To use a different image or an extracted disc, supply one explicitly:
+
+```sh
+nix run .#a10-cube-wine -- --iso /path/to/game.iso
+nix run .#a10-cube-wine -- --disc /path/to/extracted-disc
+```
+
+The launcher extracts or copies the required files at runtime and runs the original Windows executable with the pinned Wine package; the ISO is not added to the Nix store. The writable game copy and Wine prefix live under `${XDG_STATE_HOME:-$HOME/.local/state}/a10-cuba-wine/` as `game/` and `prefix/`. The launcher also gives Wine a private home and XDG configuration, data, and cache directories there, preventing Wine’s default Documents links from pointing back to the user’s home. Subsequent runs reuse them, including game saves and settings; source arguments only affect initial setup. The first run may take a while while Wine initializes. The launcher disables Wine Mono and Gecko for this game to avoid their optional first-run installers. Wine needs a graphical display, and its prefix may include personal game state. This launcher supports x86-64 Linux; it does not provide an emulation layer for other CPU architectures.
+
 ## Native bitmap probe
 
 The SDL3 probe displays an extracted BMP resource; it is an asset and rendering test, not the game. From `nix develop`, build it and run the tests:
