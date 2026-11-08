@@ -30,3 +30,5 @@ The supplied ISO has SHA-256 `a122877d2353ee8540011dc4c47f8a3daf495f5fe5001f660e
 The older Wine installation in `../install-old/` is reference material and contains differently dated binaries. Keep original game files and extracted assets out of commits.
 
 Further Ghidra findings and reproduction instructions are in [docs/binary-investigation.md](docs/binary-investigation.md).
+
+Detailed simulation call-site and DirectDraw initialization notes are in [docs/interface-tracing.md](docs/interface-tracing.md).
