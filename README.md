@@ -6,6 +6,26 @@ This project is an initial investigation toward a native Linux port. The origina
 
 Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to test the PE resource reader.
 
+## Native bitmap probe
+
+The SDL3 probe displays an extracted BMP resource; it is an asset and rendering test, not the game. From `nix develop`, build it and run the tests:
+
+```sh
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
+python3 -m unittest discover -s tests -v
+```
+
+After extracting the disc, extract a bitmap and view it (press Escape to close):
+
+```sh
+python3 tools/pe_resources.py data/disc/A-10Cuba/A10Cuba.exe --type DIB --name BADGES --extract data/badges.bmp
+./build/a10-bitmap-viewer data/badges.bmp
+```
+
+The extractor refuses to overwrite an existing output. For a headless rendered snapshot, run `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/a10-bitmap-viewer data/badges.bmp --snapshot data/rendered.bmp`. The snapshot command overwrites its output if it exists. The probe uses SDL's BMP loader and texture conversion; it does not yet reproduce DirectDraw surface behavior or run simulation code.
+
 ## Extract the disc
 
 Provide your own game disc image. With the supplied image in the workspace parent directory, run:
