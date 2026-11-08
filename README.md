@@ -34,3 +34,5 @@ Further Ghidra findings and reproduction instructions are in [docs/binary-invest
 Detailed simulation call-site and DirectDraw initialization notes are in [docs/interface-tracing.md](docs/interface-tracing.md).
 
 For an isolated Wine startup baseline, see [docs/wine-baseline.md](docs/wine-baseline.md).
+
+Graphics and surface call-site notes are in [docs/graphics-tracing.md](docs/graphics-tracing.md).

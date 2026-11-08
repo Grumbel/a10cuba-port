@@ -1,6 +1,6 @@
 # Wine reference baseline
 
-The disc's original Windows executable reached the main menu and displayed its “Tip of the Day” dialog on Linux in an isolated Wine prefix. This is a reference for port testing, not a native build. The first training mission also loads and renders a cockpit. Flight controls, audio, mission completion, and networking have not been verified.
+The disc's original Windows executable reached the main menu and displayed its “Tip of the Day” dialog on Linux in an isolated Wine prefix. This is a reference for port testing, not a native build. The first training mission also loads and renders a cockpit. Escape was also observed returning to the mission map; flight controls, audio, mission completion, and networking have not been verified.
 
 ## Setup and observation
 
@@ -24,4 +24,6 @@ A virtual display alone does not provide interactive input or visible output; us
 
 In the same isolated setup, dismiss the startup tip, wait for the splash animation to finish, select **Missions**, and choose **Fly Mission** with the default **Training Mission 1 - Takeoff** selected. The briefing and map appeared, followed by a rendered cockpit and outdoor scene. The local screenshots are `data/wine-run/missions.png` and `data/wine-run/fly.png`. This run used the writable disc copy and did not configure a CD drive or import registry entries. It confirms the mission reached a rendered state, not that flight controls, sound, or mission completion work.
 
-Next exercise the controls and record representative graphics and input behavior for comparison with a future SDL3 implementation. Investigate any additional disc or registry requirements on other mission paths.
+In a second run, sending `Escape` from the cockpit opened a map screen with **Resume** and **End Mission** buttons. Sending `F` and `0` produced no visible difference in the captured frames; that does not establish whether those inputs were received or whether their effects require other conditions. Local captures are `data/wine-run/controls-before.png` and `data/wine-run/controls-escape.png`. The Wine log included DirectPlay service-provider errors, but the single-player mission still reached the cockpit.
+
+Next exercise flight controls and record representative graphics and input behavior for comparison with a future SDL3 implementation. Investigate any additional disc or registry requirements on other mission paths.
