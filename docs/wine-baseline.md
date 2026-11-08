@@ -1,6 +1,6 @@
 # Wine reference baseline
 
-The disc's original Windows executable reached the main menu and displayed its “Tip of the Day” dialog on Linux in an isolated Wine prefix. This is a reference for port testing, not a native build. The visible menu is confirmed; mission loading, flight, audio, and networking have not been verified.
+The disc's original Windows executable reached the main menu and displayed its “Tip of the Day” dialog on Linux in an isolated Wine prefix. This is a reference for port testing, not a native build. The first training mission also loads and renders a cockpit. Flight controls, audio, mission completion, and networking have not been verified.
 
 ## Setup and observation
 
@@ -20,4 +20,8 @@ xvfb-run -a -s '-screen 0 1024x768x24' ./scripts/run-wine-reference.sh
 
 A virtual display alone does not provide interactive input or visible output; use X tools or a screen capture to inspect it. Wine and Xvfb need local socket access. The test host emitted EGL/DRI3 warnings, and a first prefix update emitted setup and OLE errors; neither prevented the observed menu. A timed run ending with exit 124 means the process was stopped by the timeout, not that startup succeeded or failed. The screenshot and window tree established the menu observation.
 
-Next verify a mission can be loaded, record any disc or registry dependencies, and capture representative graphics and input behavior for comparison with a future SDL3 implementation.
+## Training mission
+
+In the same isolated setup, dismiss the startup tip, wait for the splash animation to finish, select **Missions**, and choose **Fly Mission** with the default **Training Mission 1 - Takeoff** selected. The briefing and map appeared, followed by a rendered cockpit and outdoor scene. The local screenshots are `data/wine-run/missions.png` and `data/wine-run/fly.png`. This run used the writable disc copy and did not configure a CD drive or import registry entries. It confirms the mission reached a rendered state, not that flight controls, sound, or mission completion work.
+
+Next exercise the controls and record representative graphics and input behavior for comparison with a future SDL3 implementation. Investigate any additional disc or registry requirements on other mission paths.
