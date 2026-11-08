@@ -44,3 +44,9 @@ analyzeHeadless data/ghidra-project A10 -process A10Sim.dll -noanalysis \
 ```
 
 The script prints the containing function and Ghidra's decompilation for each address. Confirm important details in the disassembly: inferred types and function boundaries can be wrong.
+
+## Initialization table follow-up
+
+The saved `SIM_Init` argument is used by `0x10033820` to scan 64 four-byte pointers at offsets `0x00`–`0xfc`. Each non-null pointer is compared as the beginning of a NUL-terminated byte string against a requested name. Callers request names including `siminfo`, `loadinfo`, `wayinfo`, and `panelinfo`. This is more than a table of plain strings: after looking up `siminfo` and `loadinfo`, callers write function addresses into fields of the returned objects (for example `loadinfo + 0x18` at `0x1001318f`). Thus these appear to be named shared records with callbacks. Their complete layouts, ownership, and calling conventions remain unknown.
+
+The DLL's start routine also reads a 32-bit field at initialization argument offset `0x102` and passes it to routines at `0x1001d850` and `0x1001daf0`. Its unaligned offset and purpose need verification against the host's construction code; do not assume a native C layout from these offsets.

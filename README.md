@@ -32,3 +32,5 @@ The older Wine installation in `../install-old/` is reference material and conta
 Further Ghidra findings and reproduction instructions are in [docs/binary-investigation.md](docs/binary-investigation.md).
 
 Detailed simulation call-site and DirectDraw initialization notes are in [docs/interface-tracing.md](docs/interface-tracing.md).
+
+For an isolated Wine startup baseline, see [docs/wine-baseline.md](docs/wine-baseline.md).
