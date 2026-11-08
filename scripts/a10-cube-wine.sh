@@ -6,6 +6,7 @@ usage() {
   printf 'First run: use an extracted disc or ISO to prepare a writable game copy.\n'
 }
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_kind=auto
 source_path=
 case $# in
@@ -124,8 +125,6 @@ if [[ ! -f "$game/A10Cuba.exe" || ! -f "$game/A10Sim.dll" ]]; then
 fi
 flock -u 8
 exec 8>&-
-flock -u 9
-exec 9>&-
 # Wine can link its Documents and other folders to $HOME through XDG user dirs.
 # Give it a private home and XDG locations so game writes stay in the state tree.
 if [[ -z ${XAUTHORITY:-} && -f ${HOME:-}/.Xauthority ]]; then
@@ -141,6 +140,36 @@ unset WINEARCH
 # The game does not use .NET or embedded Internet Explorer; skip optional installers.
 export WINEDLLOVERRIDES="mscoree,mshtml=;${WINEDLLOVERRIDES:-}"
 cd "$game"
+# Register missing event sounds only in this prefix; never replace existing choices.
+sound_map=${A10_CUBA_SOUND_MAP:-"$script_dir/../share/sound-events.txt"}
+sound_marker="$state/.sound-events-v1"
+if [[ ! -f "$sound_marker" ]]; then
+  if [[ ! -f "$sound_map" ]]; then
+    printf 'Sound event mapping file not found: %s\n' "$sound_map" >&2
+    exit 1
+  fi
+  missing_media=0
+  windows_media=$(winepath -w "$game/Media")
+  windows_media=${windows_media//$'\r'/}
+  while read -r event filename; do
+    [[ -n $event && -n $filename ]] || continue
+    if [[ ! -f "$game/Media/$filename" ]]; then
+      printf 'Sound file missing, skipping %s: %s\n' "$event" "$filename" >&2
+      missing_media=1
+      continue
+    fi
+    registry_key="HKCU\\AppEvents\\Schemes\\Apps\\A10Cuba\\$event\\.Current"
+    if ! wine reg query "$registry_key" /ve >/dev/null 2>&1; then
+      windows_path="$windows_media\\$filename"
+      wine reg add "$registry_key" /ve /t REG_SZ /d "$windows_path" /f >/dev/null
+    fi
+  done < "$sound_map"
+  if (( missing_media == 0 )); then
+    : > "$sound_marker"
+  fi
+fi
+flock -u 9
+exec 9>&-
 desktop_size=${A10_CUBA_DESKTOP_SIZE:-1024x768}
 if [[ ! $desktop_size =~ ^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$ ]]; then
   printf 'Invalid A10_CUBA_DESKTOP_SIZE: %s (expected WIDTHxHEIGHT, e.g. 1024x768)\n' "$desktop_size" >&2

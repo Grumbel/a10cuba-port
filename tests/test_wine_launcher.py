@@ -15,18 +15,36 @@ class WineLauncherTests(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         wine = self.bin / 'wine'
-        wine.write_text('#!/bin/sh\nprintf "%s\\n%s\\n%s\\n" "$PWD" "$WINEPREFIX" "$*" > "$TEST_LOG"\n')
+        wine.write_text('''#!/bin/sh
+if [ "$1" = reg ]; then
+    printf '%s\\n' "$*" >> "$TEST_REG_LOG"
+    if [ "$2" = query ]; then
+        case "$3" in *A-10Button*) exit 0;; *) exit 1;; esac
+    fi
+    exit 0
+fi
+printf '%s\\n%s\\n%s\\n' "$PWD" "$WINEPREFIX" "$*" > "$TEST_LOG"
+''')
         wine.chmod(0o755)
+        winepath = self.bin / 'winepath'
+        winepath.write_text('#!/bin/sh\nprintf "Z:\\\\fake.wav\\n"\n')
+        winepath.chmod(0o755)
         self.disc = self.root / 'disc'
         (self.disc / 'A-10Cuba/Missions').mkdir(parents=True)
         (self.disc / 'A-10Cuba/LoadOuts').mkdir()
+        (self.disc / 'A-10Cuba/Media').mkdir()
+        for filename in ('APU.wav', 'SwitchPush.wav'):
+            (self.disc / 'A-10Cuba/Media' / filename).write_text('wav')
+        self.sound_map = self.root / 'sounds.txt'
+        self.sound_map.write_text('A-10APU APU.wav\nA-10Button SwitchPush.wav\n')
         (self.disc / 'A-10Cuba/LoadOuts/Default.lod').write_text('default')
         for name in ('A-10Cuba/A10Cuba.exe', 'A-10Cuba/A10Sim.dll',
                      'A-10Cuba/Missions/CubaTerrain.db', 'CTL3D32.DLL'):
             (self.disc / name).write_text(name)
         self.env = os.environ.copy()
         self.env.update(PATH=f'{self.bin}:{self.env["PATH"]}', HOME=str(self.root),
-                        XDG_STATE_HOME=str(self.root / 'custom-state'), XDG_DATA_HOME=str(self.root / 'custom-data'), TEST_LOG=str(self.root / 'wine.log'))
+                        XDG_STATE_HOME=str(self.root / 'custom-state'), XDG_DATA_HOME=str(self.root / 'custom-data'), TEST_LOG=str(self.root / 'wine.log'),
+                        TEST_REG_LOG=str(self.root / 'registry.log'), A10_CUBA_SOUND_MAP=str(self.sound_map))
 
     def run_launcher(self, *args, cwd=None):
         return subprocess.run([str(SCRIPT), *map(str, args)], cwd=cwd or self.root,
@@ -44,12 +62,18 @@ class WineLauncherTests(unittest.TestCase):
         self.assertFalse(loadout.is_symlink())
         loadout.write_text('modified')
         self.assertEqual((self.root / 'custom-data/a10-cuba-wine/game/LoadOuts/Default.lod').read_text(), 'default')
+        registry_log = (self.root / 'registry.log').read_text()
+        self.assertIn('add HKCU', registry_log)
+        self.assertIn('A-10APU', registry_log)
+        self.assertNotIn('add HKCU\\AppEvents\\Schemes\\Apps\\A10Cuba\\A-10Button', registry_log)
+        self.assertTrue((state / '.sound-events-v1').is_file())
         save = state / 'game/save.dat'
         save.write_text('progress')
         (self.disc / 'A-10Cuba/A10Cuba.exe').unlink()
         result = self.run_launcher()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(save.read_text(), 'progress')
+        self.assertEqual((self.root / 'registry.log').read_text(), registry_log)
         self.assertTrue((state / 'home').is_dir())
         self.assertTrue((state / 'xdg/config').is_dir())
         self.assertEqual(list(state.glob('.setup.????????')), [])

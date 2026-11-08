@@ -1,0 +1,9 @@
+# Wine sound event registration
+
+The original game uses Windows application sound-event mappings for some sounds. The executable's routine at `0x00406bb0` constructs `AppEvents\\Schemes\\Apps\\A10Cuba\\<event>\\.Current` and reads the default value from `HKEY_CURRENT_USER`. The `install-old/A10Cuba.reg` reference contains event-to-WAV mappings, but its absolute paths refer to a different Wine installation and must not be imported directly. The game's embedded `WAVE` resources are a separate source used by other sound paths, so missing these registry values does not necessarily make every sound silent.
+
+The launcher registers missing event values in its own Wine prefix on the first run after this feature is added. It uses the local game working directory, translates the media directory with `winepath`, and uses the exact filenames from the disc. The mapping is listed in `share/sound-events.txt`. Existing default values, including deliberately empty ones, are left alone. An initialization marker in the state directory prevents later runs from replacing user choices; if a mapped media file is missing, the launcher reports it and retries missing entries on a later run.
+
+The old export also refers to `ExplosionB.wav` and `ExplosionC.wav`, which are absent from this disc's `Media/` directory, and has an empty credits entry. The launcher does not invent replacements or register those entries. Event-label descriptions from the old export are not needed for the lookup observed in the executable and are not imported.
+
+With a fresh prefix under Xvfb, all 44 available mappings were created and the game reached its startup dialog. For example, the `A-10Engine` value pointed to the working copy's `Media/EngineA-10.wav`. This verifies registry initialization and startup, not audible playback: sound output depends on Wine's audio backend and the host audio system, and was not confirmed by listening in this test.

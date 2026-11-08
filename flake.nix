@@ -13,7 +13,10 @@
       in pkgs.writeShellApplication {
         name = "a10-cube-wine";
         runtimeInputs = with pkgs; [ coreutils p7zip util-linux wineWow64Packages.stable ];
-        text = builtins.readFile ./scripts/a10-cube-wine.sh;
+        text = ''
+          export A10_CUBA_SOUND_MAP=${pkgs.lib.escapeShellArg (toString ./share/sound-events.txt)}
+          ${builtins.readFile ./scripts/a10-cube-wine.sh}
+        '';
       };
       apps.x86_64-linux.a10-cube-wine = {
         type = "app";
