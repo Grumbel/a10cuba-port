@@ -23,3 +23,25 @@ The interface identities for these surface fields are inferred from method offse
 ## Next tracing targets
 
 Trace creation and ownership of the surfaces at offsets `+0x3c`, `+0x40`, and `+0x44`; identify their dimensions, pixel formats, palette behavior, and which routines write pixels. Then instrument one frame in the Wine reference run and compare it with a native test harness before implementing a broader graphics layer.
+
+## Surface creation and palette
+
+The setup routine creates the surface stored at `+0x3c` at `0x004084e3` with `DDSD_CAPS` and capabilities `DDSCAPS_PRIMARYSURFACE | DDSCAPS_VIDEOMEMORY` (`0x4200`). If creation fails, it retries without `DDSCAPS_VIDEOMEMORY` at `0x00408511`. It creates the surface at `+0x40` at `0x004085cc` as `DDSCAPS_OFFSCREENPLAIN | DDSCAPS_VIDEOMEMORY` (`0x4040`), again retrying without the video-memory flag; it fills width and height from the selected display mode. The primary surface receives a palette via `SetPalette` at `0x00408533`. The palette creation call at `0x0040847e` uses `DDPCAPS_8BIT | DDPCAPS_ALLOW256` (`0x44`).
+
+The code tries locking each surface in turn and, on success, stores that surface in `+0x44`, together with values from the returned descriptor. Thus `+0x44` is an alias selected from the earlier surfaces on successful lock, not an independently established third surface. These details describe this creation path and do not prove every runtime mode uses the same pixel format or palette.
+
+## Embedded graphics inventory
+
+Use `tools/pe_resources.py` to enumerate the complete PE resource tree or extract one raw resource into an ignored local directory:
+
+```sh
+python3 tools/pe_resources.py data/disc/A-10Cuba/A10Cuba.exe --type DIB > data/dib-inventory.json
+python3 tools/pe_resources.py data/disc/A-10Cuba/A10Cuba.exe --type DIB --name BADGES --extract data/badges.bmp
+python3 -m unittest discover -s tests -v
+```
+
+The tool emits JSON metadata including the file offset, RVA, size, and language; numeric type or name IDs use `#`, for example `--type '#2'`. Extraction requires exactly one match and refuses to overwrite an existing output. It extracts resource bytes unchanged and does not interpret their formats.
+
+For the identified disc build, the executable has 347 resource leaves, including 209 `DIB` and 62 `WAVE` entries. The DLL has 520, including 365 `SPDX`, 134 `NRCT`, 3 `DATA`, and 1 `CLUT`. Sampled `DIB` entries `BADGES` and `AIRBARBEGIN` start with BMP file headers and are uncompressed 8-bit indexed images; `BADGES` is 1128×42 and `AIRBARBEGIN` is 2×17. This does not establish the format of every resource with the same type. Extracted assets remain under ignored `data/` and must not be committed.
+
+A practical native milestone is to load one of these BMP resources and display its palette-indexed pixels in SDL3, preserving row pitch and palette colors. This would validate asset access and the rendering path before attempting the simulation interface.

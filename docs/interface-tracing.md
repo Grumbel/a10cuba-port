@@ -32,7 +32,7 @@ Names and offsets were checked against the locally installed MinGW `ddraw.h`. Th
 
 ## Embedded resources
 
-The executable's PE resource tree includes custom `DIB`, `DIBDLGRES`, and `WAVE` types. `objdump -x` shows a `DIB` name table with 209 entries, including `BREIFINGS`, `AIRBARBEGIN`, and `BADGES`, plus a `WAVE` table with 62 entries. The DLL contains at least custom `CLUT` and `DATA` resource types. These are PE resources inside the binaries, separate from the disc's loose files. GNU `objdump` stopped listing the trees early on these files, so these figures are individual table counts, not complete inventories. Resource formats and runtime loading paths remain to be checked.
+The executable's PE resource tree includes custom `DIB`, `DIBDLGRES`, and `WAVE` types. `objdump -x` shows a `DIB` name table with 209 entries, including `BREIFINGS`, `AIRBARBEGIN`, and `BADGES`, plus a `WAVE` table with 62 entries. The DLL contains at least custom `CLUT` and `DATA` resource types. These are PE resources inside the binaries, separate from the disc's loose files. GNU `objdump` stopped listing the trees early on these files; the complete inventory is now documented in [graphics-tracing.md](graphics-tracing.md). Resource formats and runtime loading paths remain to be checked.
 
 ## Reproduce focused decompilation
 
