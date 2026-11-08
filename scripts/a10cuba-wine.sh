@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: a10-cube-wine [--disc DIRECTORY | --iso IMAGE]\n'
+  printf 'Usage: a10cuba-wine [--disc DIRECTORY | --iso IMAGE]\n'
   printf 'First run: use an extracted disc or ISO to prepare a writable game copy.\n'
 }
 
@@ -39,8 +39,8 @@ else
   printf 'Set HOME or an absolute XDG_DATA_HOME to use this launcher.\n' >&2
   exit 1
 fi
-state="$state_home/a10-cuba-wine"
-data="$data_home/a10-cuba-wine"
+state="$state_home/a10cuba-wine"
+data="$data_home/a10cuba-wine"
 installed_game="$data/game"
 game="$state/game"
 mkdir -p -- "$state" "$data"
@@ -48,22 +48,6 @@ exec 9>"$state/.setup.lock"
 flock 9
 exec 8>"$data/.setup.lock"
 flock 8
-
-if [[ ! -e "$installed_game" && -f "$game/A10Cuba.exe" && -f "$game/A10Sim.dll" ]]; then
-  # Preserve an older installation and every unknown save file in place.
-  temporary=$(mktemp -d "$data/.setup.XXXXXXXX")
-  trap 'rm -rf -- "$temporary"' EXIT
-  mkdir "$temporary/game"
-  for path in A10Cuba.exe A10Sim.dll A10CUBA.TIP CTL3D32.DLL Media Missions LoadOuts; do
-    if [[ -e "$game/$path" ]]; then
-      cp -RL -- "$game/$path" "$temporary/game/"
-    fi
-  done
-  mv -T -- "$temporary/game" "$installed_game"
-  rm -rf -- "$temporary"
-  trap - EXIT
-  printf 'Copied existing game files to %s; kept existing working files in %s\n' "$installed_game" "$game"
-fi
 
 if [[ ! -e "$installed_game" ]]; then
   if [[ $source_kind == auto ]]; then

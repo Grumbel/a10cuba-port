@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/a10-cube-wine.sh'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/a10cuba-wine.sh'
 
 
 class WineLauncherTests(unittest.TestCase):
@@ -53,15 +53,15 @@ printf '%s\\n%s\\n%s\\n' "$PWD" "$WINEPREFIX" "$*" > "$TEST_LOG"
     def test_setup_and_reuse_preserve_game_state(self):
         result = self.run_launcher('--disc', self.disc)
         self.assertEqual(result.returncode, 0, result.stderr)
-        state = self.root / 'custom-state/a10-cuba-wine'
+        state = self.root / 'custom-state/a10cuba-wine'
         self.assertEqual((self.root / 'wine.log').read_text().splitlines(),
                          [str(state / 'game'), str(state / 'prefix'), 'explorer /desktop=A10Cuba,1024x768 A10Cuba.exe'])
-        self.assertTrue((self.root / 'custom-data/a10-cuba-wine/game/A10Cuba.exe').is_file())
+        self.assertTrue((self.root / 'custom-data/a10cuba-wine/game/A10Cuba.exe').is_file())
         self.assertTrue((state / 'game/A10Cuba.exe').is_symlink())
         loadout = state / 'game/LoadOuts/Default.lod'
         self.assertFalse(loadout.is_symlink())
         loadout.write_text('modified')
-        self.assertEqual((self.root / 'custom-data/a10-cuba-wine/game/LoadOuts/Default.lod').read_text(), 'default')
+        self.assertEqual((self.root / 'custom-data/a10cuba-wine/game/LoadOuts/Default.lod').read_text(), 'default')
         registry_log = (self.root / 'registry.log').read_text()
         self.assertIn('add HKCU', registry_log)
         self.assertIn('A-10APU', registry_log)
@@ -82,22 +82,19 @@ printf '%s\\n%s\\n%s\\n' "$PWD" "$WINEPREFIX" "$*" > "$TEST_LOG"
         (self.disc / 'A-10Cuba/A10Sim.dll').unlink()
         result = self.run_launcher('--disc', self.disc)
         self.assertNotEqual(result.returncode, 0)
-        state = self.root / 'custom-state/a10-cuba-wine'
+        state = self.root / 'custom-state/a10cuba-wine'
         self.assertFalse((state / 'game').exists())
-        self.assertFalse((self.root / 'custom-data/a10-cuba-wine/game').exists())
+        self.assertFalse((self.root / 'custom-data/a10cuba-wine/game').exists())
         self.assertEqual(list(state.glob('.setup.????????')), [])
 
-    def test_existing_working_directory_preserves_saves(self):
-        state_game = self.root / 'custom-state/a10-cuba-wine/game'
-        state_game.mkdir(parents=True)
-        for name in ('A10Cuba.exe', 'A10Sim.dll', 'existing-save.dat'):
-            (state_game / name).write_text(name)
-        result = self.run_launcher()
+    def test_old_xdg_directories_are_not_migrated(self):
+        old_state = self.root / 'custom-state/a10-cuba-wine/game'
+        old_state.mkdir(parents=True)
+        (old_state / 'save.dat').write_text('old save')
+        result = self.run_launcher('--disc', self.disc)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((state_game / 'existing-save.dat').read_text(), 'existing-save.dat')
-        self.assertFalse((state_game / 'A10Cuba.exe').is_symlink())
-        self.assertTrue((self.root / 'custom-data/a10-cuba-wine/game/A10Cuba.exe').is_file())
-        self.assertFalse((self.root / 'custom-data/a10-cuba-wine/game/existing-save.dat').exists())
+        self.assertEqual((old_state / 'save.dat').read_text(), 'old save')
+        self.assertFalse((self.root / 'custom-state/a10cuba-wine/game/save.dat').exists())
 
     def test_custom_desktop_size(self):
         self.env['A10_CUBA_DESKTOP_SIZE'] = '1280x800'
@@ -109,7 +106,7 @@ printf '%s\\n%s\\n%s\\n' "$PWD" "$WINEPREFIX" "$*" > "$TEST_LOG"
         self.env['XDG_STATE_HOME'] = 'relative'
         result = self.run_launcher('--disc', self.disc)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((self.root / '.local/state/a10-cuba-wine/game/A10Cuba.exe').exists())
+        self.assertTrue((self.root / '.local/state/a10cuba-wine/game/A10Cuba.exe').exists())
 
 
 if __name__ == '__main__':

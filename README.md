@@ -11,19 +11,19 @@ Install Nix with flakes enabled, then run `nix develop` from this directory. The
 On x86-64 Linux, run from this repository directory:
 
 ```sh
-nix run .#a10-cube-wine
+nix run .#a10cuba-wine
 ```
 
 On first run, the launcher uses `data/disc/` if it has been extracted, or the original ISO in the parent workspace directory. To use a different image or an extracted disc, supply one explicitly:
 
 ```sh
-nix run .#a10-cube-wine -- --iso /path/to/game.iso
-nix run .#a10-cube-wine -- --disc /path/to/extracted-disc
+nix run .#a10cuba-wine -- --iso /path/to/game.iso
+nix run .#a10cuba-wine -- --disc /path/to/extracted-disc
 ```
 
-The launcher extracts or copies the required files at runtime and runs the original Windows executable with the pinned Wine package; the ISO is not added to the Nix store. Game files are installed under `${XDG_DATA_HOME:-$HOME/.local/share}/a10-cuba-wine/game/`. The Wine prefix, private home, and writable working directory are under `${XDG_STATE_HOME:-$HOME/.local/state}/a10-cuba-wine/`. The working directory links to installed files, with separate writable loadout copies; new files created there remain in state. Changes made through a link to an existing installed asset affect the data copy.
+The launcher extracts or copies the required files at runtime and runs the original Windows executable with the pinned Wine package; the ISO is not added to the Nix store. Game files are installed under `${XDG_DATA_HOME:-$HOME/.local/share}/a10cuba-wine/game/`. The Wine prefix, private home, and writable working directory are under `${XDG_STATE_HOME:-$HOME/.local/state}/a10cuba-wine/`. The working directory links to installed files, with separate writable loadout copies; new files created there remain in state. Changes made through a link to an existing installed asset affect the data copy.
 
-A previous launcher’s working directory is preserved in place, including any saves, while its game files are copied to the data directory. Subsequent runs reuse existing files; source arguments only affect initial setup. Wine’s private home and XDG directories prevent its default Documents links from pointing to the user’s home. The launcher disables Wine Mono and Gecko for this game to avoid their optional first-run installers. It also initializes missing game sound-event mappings in the isolated Wine registry; see [Wine sound notes](docs/wine-sound.md).
+Subsequent runs reuse existing files; source arguments only affect initial setup. Wine’s private home and XDG directories prevent its default Documents links from pointing to the user’s home. The launcher disables Wine Mono and Gecko for this game to avoid their optional first-run installers. It also initializes missing game sound-event mappings in the isolated Wine registry; see [Wine sound notes](docs/wine-sound.md).
 
 The game runs inside a Wine virtual desktop window, initially 1024×768. Wine may resize that window when the game changes display mode. Set `A10_CUBA_DESKTOP_SIZE=1280x800` before the command to choose a different initial size. The first run may take a while while Wine initializes. Wine needs a graphical display, and its prefix may include personal game state. This launcher supports x86-64 Linux; it does not provide an emulation layer for other CPU architectures.
 
