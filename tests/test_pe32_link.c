@@ -228,6 +228,54 @@ static void test_preloaded_win32_module_lookups(void)
     assert(pe32_win32_load_library_a("A10Sim.dll") == 0);
 }
 
+static void test_win32_tls_and_last_error(void)
+{
+    pe32_u32 first, second, i;
+    pe32_win32_initialize(0, 0);
+    assert(pe32_win32_get_last_error() == 0);
+    pe32_win32_set_last_error(0xabcdef12);
+    assert(pe32_win32_get_last_error() == 0xabcdef12);
+
+    first = pe32_win32_tls_alloc();
+    second = pe32_win32_tls_alloc();
+    assert(first == 0 && second == 1);
+    assert(pe32_win32_get_last_error() == 0xabcdef12);
+    assert(pe32_win32_tls_get_value(first) == 0);
+    assert(pe32_win32_get_last_error() == 0); /* Success with NULL. */
+    assert(pe32_win32_tls_set_value(first, 0xdeadbeef) == 1);
+    assert(pe32_win32_tls_set_value(second, 0x12345678) == 1);
+    pe32_win32_set_last_error(5);
+    assert(pe32_win32_tls_get_value(first) == 0xdeadbeef);
+    assert(pe32_win32_get_last_error() == 0);
+    assert(pe32_win32_tls_get_value(second) == 0x12345678);
+
+    assert(pe32_win32_tls_free(first) == 1);
+    assert(pe32_win32_tls_get_value(first) == 0);
+    assert(pe32_win32_get_last_error() == 87); /* Invalid index. */
+    /* Windows allows TlsSetValue on an unallocated low index. */
+    assert(pe32_win32_tls_set_value(first, 1) == 1);
+    assert(pe32_win32_tls_free(first) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_tls_alloc() == first); /* Reuse and reset slot. */
+    assert(pe32_win32_tls_get_value(first) == 0);
+    assert(pe32_win32_tls_set_value(64, 1) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+
+    for (i = 2; i < 64; ++i) {
+        assert(pe32_win32_tls_alloc() == i);
+    }
+    assert(pe32_win32_tls_alloc() == PE32_TLS_OUT_OF_INDEXES);
+    assert(pe32_win32_get_last_error() == 8); /* Allocation exhausted. */
+    assert(pe32_win32_tls_free(0xffffffffu) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_tls_get_value(64) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+
+    pe32_win32_initialize(0, 0);
+    assert(pe32_win32_tls_alloc() == 0);
+    assert(pe32_win32_get_last_error() == 0);
+}
+
 int main(void)
 {
     test_named_and_ordinal();
@@ -236,6 +284,7 @@ int main(void)
     test_reject_bad_images_and_forwarders();
     test_explicit_host_resolver();
     test_preloaded_win32_module_lookups();
-    puts("PE32 module linker: imports, dynamic DLL lookup and bounds tests passed");
+    test_win32_tls_and_last_error();
+    puts("PE32 module linker: imports, DLL lookup, TLS and bounds tests passed");
     return 0;
 }

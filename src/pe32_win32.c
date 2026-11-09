@@ -6,6 +6,17 @@
 static const struct pe32_module *registered_modules;
 static pe32_u32 registered_count;
 
+enum {
+    PE32_TLS_SLOT_COUNT = 64,
+    PE32_ERROR_SUCCESS = 0,
+    PE32_ERROR_NOT_ENOUGH_MEMORY = 8,
+    PE32_ERROR_INVALID_PARAMETER = 87
+};
+
+static pe32_u32 current_last_error;
+static pe32_u8 tls_allocated[PE32_TLS_SLOT_COUNT];
+static pe32_u32 tls_values[PE32_TLS_SLOT_COUNT];
+
 #if defined(__i386__)
 static int equal_ascii_ci(const char *a, const char *b)
 {
@@ -43,8 +54,74 @@ static int equal_ascii(const char *a, const char *b)
 
 void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
 {
+    pe32_u32 i;
     registered_modules = modules;
     registered_count = modules ? count : 0;
+    current_last_error = 0;
+    for (i = 0; i < PE32_TLS_SLOT_COUNT; ++i) {
+        tls_allocated[i] = 0;
+        tls_values[i] = 0;
+    }
+}
+
+void PE32_WINAPI pe32_win32_set_last_error(pe32_u32 error)
+{
+    current_last_error = error;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_get_last_error(void)
+{
+    return current_last_error;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_tls_alloc(void)
+{
+    pe32_u32 i;
+    for (i = 0; i < PE32_TLS_SLOT_COUNT; ++i) {
+        if (!tls_allocated[i]) {
+            tls_allocated[i] = 1;
+            tls_values[i] = 0;
+            return i;
+        }
+    }
+    current_last_error = PE32_ERROR_NOT_ENOUGH_MEMORY;
+    return PE32_TLS_OUT_OF_INDEXES;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_tls_free(pe32_u32 index)
+{
+    if (index >= PE32_TLS_SLOT_COUNT || !tls_allocated[index]) {
+        current_last_error = PE32_ERROR_INVALID_PARAMETER;
+        return 0;
+    }
+    tls_allocated[index] = 0;
+    tls_values[index] = 0;
+    return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_tls_get_value(pe32_u32 index)
+{
+    if (index >= PE32_TLS_SLOT_COUNT || !tls_allocated[index]) {
+        current_last_error = PE32_ERROR_INVALID_PARAMETER;
+        return 0;
+    }
+    /* Unlike most Win32 APIs, TlsGetValue clears last error on success,
+     * including a successful lookup of a null pointer. */
+    current_last_error = PE32_ERROR_SUCCESS;
+    return tls_values[index];
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_tls_set_value(pe32_u32 index, pe32_u32 value)
+{
+    /* Win32's TlsSetValue performs minimal validation for the first 64
+     * indices: a released index in this range can still accept a write.
+     * TlsAlloc clears the slot on subsequent reallocation. */
+    if (index >= PE32_TLS_SLOT_COUNT) {
+        current_last_error = PE32_ERROR_INVALID_PARAMETER;
+        return 0;
+    }
+    tls_values[index] = value;
+    return 1;
 }
 
 pe32_u32 PE32_WINAPI pe32_win32_load_library_a(const char *name)
@@ -94,16 +171,22 @@ enum pe32_link_status pe32_win32_resolve_import(
     if (!equal_ascii_ci(dll, "KERNEL32.dll") || !name || !address) {
         return PE32_LINK_MISSING;
     }
-    if (equal_ascii(name, "LoadLibraryA")) {
-        *address = (pe32_u32)(unsigned long)&pe32_win32_load_library_a;
-    } else if (equal_ascii(name, "GetProcAddress")) {
-        *address = (pe32_u32)(unsigned long)&pe32_win32_get_proc_address;
-    } else if (equal_ascii(name, "GetModuleHandleA")) {
-        *address = (pe32_u32)(unsigned long)&pe32_win32_get_module_handle_a;
-    } else {
-        return PE32_LINK_MISSING;
+#define EXPOSE_KERNEL32(legacy_name, implementation) \
+    if (equal_ascii(name, legacy_name)) { \
+        *address = (pe32_u32)(unsigned long)&implementation; \
+        return PE32_LINK_OK; \
     }
-    return PE32_LINK_OK;
+    EXPOSE_KERNEL32("LoadLibraryA", pe32_win32_load_library_a)
+    EXPOSE_KERNEL32("GetProcAddress", pe32_win32_get_proc_address)
+    EXPOSE_KERNEL32("GetModuleHandleA", pe32_win32_get_module_handle_a)
+    EXPOSE_KERNEL32("SetLastError", pe32_win32_set_last_error)
+    EXPOSE_KERNEL32("GetLastError", pe32_win32_get_last_error)
+    EXPOSE_KERNEL32("TlsAlloc", pe32_win32_tls_alloc)
+    EXPOSE_KERNEL32("TlsFree", pe32_win32_tls_free)
+    EXPOSE_KERNEL32("TlsGetValue", pe32_win32_tls_get_value)
+    EXPOSE_KERNEL32("TlsSetValue", pe32_win32_tls_set_value)
+#undef EXPOSE_KERNEL32
+    return PE32_LINK_MISSING;
 #else
     (void)dll;
     (void)name;

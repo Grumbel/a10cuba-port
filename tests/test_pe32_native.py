@@ -126,6 +126,33 @@ def dynamic_lookup_fixtures():
     return bytes(exe), bytes(dll)
 
 
+def tls_fixture():
+    """Synthetic PE entry: TlsAlloc, TlsSetValue(0, 42), TlsGetValue(0)."""
+    base = 0x00400000
+    data = bytearray(fixture(image_base=base))
+    opt = 0x98
+    struct.pack_into('<II', data, opt + 104, 0x2020, 40)
+    struct.pack_into('<IIIII', data, 0x420, 0x2080, 0, 0, 0x20a0, 0x2080)
+    struct.pack_into('<IIII', data, 0x480, 0x20c0, 0x20d0, 0x20e0, 0)
+    data[0x4a0:0x4ad] = b'KERNEL32.dll\0'
+    for rva, symbol in ((0x20c0, b'TlsAlloc\0'),
+                        (0x20d0, b'TlsSetValue\0'),
+                        (0x20e0, b'TlsGetValue\0')):
+        pos = 0x400 + rva - 0x2000
+        struct.pack_into('<H', data, pos, 0)
+        data[pos + 2:pos + 2 + len(symbol)] = symbol
+    data[0x200:0x218] = (b'\xff\x15' + struct.pack('<I', base + 0x2080)
+                         + b'\x6a\x2a\x50'
+                         + b'\xff\x15' + struct.pack('<I', base + 0x2084)
+                         + b'\x6a\x00'
+                         + b'\xff\x15' + struct.pack('<I', base + 0x2088)
+                         + b'\xc3')
+    struct.pack_into('<II', data, opt + 136, 0x3000, 16)
+    struct.pack_into('<IIHHHH', data, 0x600, 0x1000, 16,
+                     0x3002, 0x300b, 0x3013, 0)
+    return bytes(data)
+
+
 class ImportTests(unittest.TestCase):
     def test_no_imports(self):
         self.assertEqual(pe32_imports.PEImports(fixture()).imports(), [])
@@ -201,6 +228,11 @@ class ImportTests(unittest.TestCase):
         symbols = pe32_imports.PEImports(dll).exports()['symbols']
         self.assertEqual(symbols[0]['names'], ['_SIM_Init@4'])
 
+    def test_tls_fixture_imports(self):
+        symbols = pe32_imports.PEImports(tls_fixture()).imports()[0]['symbols']
+        self.assertEqual([s['name'] for s in symbols],
+                         ['TlsAlloc', 'TlsSetValue', 'TlsGetValue'])
+
     @unittest.skipUnless(shutil.which('objdump'), 'binutils objdump unavailable')
     def test_fixture_is_recognized_by_binutils(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -240,6 +272,10 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_load_library_a', 4),
             ('pe32_win32_get_module_handle_a', 4),
             ('pe32_win32_get_proc_address', 8),
+            ('pe32_win32_set_last_error', 4),
+            ('pe32_win32_tls_free', 4),
+            ('pe32_win32_tls_get_value', 4),
+            ('pe32_win32_tls_set_value', 8),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -311,6 +347,14 @@ class NativeRunnerTests(unittest.TestCase):
             self.assertIn('linked KERNEL32.dll!GetProcAddress', result.stdout)
             self.assertIn('Entry returned 42', result.stdout)
 
+    def test_tls_imported_function_calls(self):
+        result = self.invoke(tls_fixture(), '--run-entry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('linked KERNEL32.dll!TlsAlloc', result.stdout)
+        self.assertIn('linked KERNEL32.dll!TlsSetValue', result.stdout)
+        self.assertIn('linked KERNEL32.dll!TlsGetValue', result.stdout)
+        self.assertIn('Entry returned 42', result.stdout)
+
 
 class HostLinkerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
@@ -355,6 +399,15 @@ class OriginalDiscTests(unittest.TestCase):
                          (15, 335))
         self.assertEqual((len(dll_imports), sum(len(x['symbols']) for x in dll_imports)),
                          (2, 61))
+        implemented = {'LoadLibraryA', 'GetProcAddress', 'GetModuleHandleA',
+                       'TlsAlloc', 'TlsFree', 'TlsGetValue', 'TlsSetValue',
+                       'SetLastError', 'GetLastError'}
+        for imports, count in ((exe_imports, 8), (dll_imports, 9)):
+            kernel32 = next(module for module in imports
+                            if module['dll'].lower() == 'kernel32.dll')
+            self.assertEqual(len(implemented & {
+                symbol['name'] for symbol in kernel32['symbols']
+                if 'name' in symbol}), count)
         self.assertEqual(exports['dll'], 'A10Sim.dll')
         self.assertEqual(
             [(x['names'], x['rva']) for x in exports['symbols']], [

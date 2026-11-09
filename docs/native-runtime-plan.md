@@ -43,14 +43,17 @@ The repository now has:
   and validates *all* imports before writing a target module's import address
   table. It never silently stubs an unknown Windows API. An optional external
   resolver can supply **explicitly implemented** platform shim addresses.
-- `src/pe32_win32.h` and `src/pe32_win32.c`: minimal `stdcall` i386 entry
-  points for `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA` with an
-  already-loaded module registry. The EXE uses the first two to locate the
-  simulation exports. The registry returns PE image bases as Windows HMODULEs
-  and supports both named and ordinal lookups, including case-insensitive DLL
-  names. **This does not load additional binaries on demand**, call `DllMain`,
-  maintain reference counts, or implement `GetLastError`. The IAT resolver
-  advertises only those three exact `KERNEL32.dll` symbols on Linux/i386.
+- `src/pe32_win32.h` and `src/pe32_win32.c`: a deliberately narrow `stdcall`
+  `KERNEL32.dll` shim with **nine** exact exports. The preloaded-module registry
+  supports `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA`; the EXE
+  uses the first two to locate the simulation exports. The registry returns
+  image bases as Windows HMODULEs and supports named/ordinal lookups. The
+  single-thread CRT primitives are `TlsAlloc`, `TlsFree`, `TlsGetValue`,
+  `TlsSetValue`, `GetLastError`, and `SetLastError`. TLS has 64 reusable slots;
+  successful `TlsGetValue` clears last error even for a NULL value. This
+  **does not** load binaries on demand, call `DllMain`, maintain reference
+  counts, or isolate TLS and last-error state across Linux threads. The shim
+  is usable for **single-thread bootstrap experiments only**.
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
@@ -61,14 +64,15 @@ The repository now has:
 - `tests/test_pe32_link.c` and `tests/test_pe32_native.py`: C linker tests run
   with the **host compiler and UBSan** (including successful name/ordinal
   binding, fake host import resolution, preloaded `LoadLibraryA`/
-  `GetProcAddress` lookups, and refusal of malformed/missing/forwarded imports),
-  plus PE32 synthetic fixtures, two-module imported-function calls and
-  synthetic dynamic-DLL-lookup execution tests.
+  `GetProcAddress` lookups, TLS exhaustion/reuse/last-error contracts, and
+  refusal of malformed/missing/forwarded imports), plus PE32 synthetic
+  fixtures, two-module imported-function calls, dynamic-DLL lookup and TLS
+  imported-call execution tests.
   Actual x86 entry tests run on an i386-enabled Linux kernel or through
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution and three tiny Windows API stubs, but **no full** Win32 API
+import resolution and nine early Windows API stubs, but **no full** Win32 API
 layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
 integration. The
 mapping currently uses writable/executable pages; treat the
@@ -117,6 +121,12 @@ across 15 DLLs**; the simulation DLL has **61 across 2 DLLs** and exactly six
 verified `SIM_*` exports. Both have relocations and no TLS directory. Details
 and executable checksums are in [binary-investigation](binary-investigation.md).
 
+Of the **396 static imported symbols** in the original EXE and DLL combined,
+the nine-function shim covers **17 individual imports** (eight in the EXE,
+nine in the DLL). The other **379** imported symbols remain unsatisfied.
+Even though both PE files have no *static TLS directory*, they import the
+`Tls*` functions for dynamically allocated runtime thread-local state.
+
 The ChatGPT development container has GCC/binutils and Python but **no Nix,
 CMake, SDL3, Wine or 32-bit libc**. The bootstrap compiles as a static i386
 ELF. The container kernel refuses to execute i386 ELF (`Exec format error`),
@@ -134,11 +144,12 @@ A-10 code execution or SDL3 game output is claimed.
    function Win32/COM behavior requirements. Keep the files ignored.
 2. **Dual PE module loader (core linker and preloaded lookup implemented).**
    Both modules map; named and ordinal exports resolve, and the IAT is patched
-   with complete pre-validation. A three-function preloaded-only Kernel32
+   with complete pre-validation. A nine-function, preloaded-only Kernel32
    shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
-   `A10Sim.dll`. Host C tests pass. Remaining: execute synthetic two-module
-   and dynamic-lookup tests on a host that can run Linux/i386, validate actual
-   mapped binaries, and implement full Win32 loading / other platform imports.
+   `A10Sim.dll` and basic single-thread CRT TLS/error handling. Host C tests
+   pass. Remaining: execute the synthetic two-module, dynamic-lookup and TLS
+   tests on an i386-enabled host, validate actual mapped binaries, and
+   implement full Win32 loading and the remaining platform imports.
 3. **Win32/CRT startup shim.** Implement the specific Windows imports the
    game actually calls, including allocation, file paths, registry settings,
    timing, thread-local state, events, window/input messages, and DLL
@@ -173,6 +184,9 @@ instruction execution speed.
 
 - [Microsoft PE/COFF specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
   for section mapping, imports, exports, base relocations and TLS.
+- [Microsoft TlsGetValue API](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue)
+  and [SetLastError API](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setlasterror)
+  for thread-local storage and Win32 last-error contracts.
 - [Microsoft DirectDraw surface API](https://learn.microsoft.com/en-us/windows/win32/api/ddraw/nn-ddraw-idirectdrawsurface7)
   for surface concepts (the actual game uses older interface versions).
 - [SDL3 surface API](https://wiki.libsdl.org/SDL3/SDL_CreateSurface)
