@@ -61,7 +61,25 @@ struct pe32_io_stat {
     pe32_u32 write_nanoseconds;
 };
 
+struct pe32_find_data_a {
+    pe32_u32 attributes;
+    struct pe32_filetime creation_time;
+    struct pe32_filetime access_time;
+    struct pe32_filetime write_time;
+    pe32_u32 size_high;
+    pe32_u32 size_low;
+    pe32_u32 reserved0;
+    pe32_u32 reserved1;
+    char filename[260];
+    char alternate_filename[14];
+};
+
 typedef int (*pe32_io_stat_fn)(pe32_u32 fd, struct pe32_io_stat *stat);
+typedef int (*pe32_io_open_dir_fn)(const char *root, const char *relative);
+/* Returns 1 for a directory entry, 0 at EOF, or negative Linux errno.
+ * The entry name is a NUL-terminated filename (not a path). */
+typedef int (*pe32_io_next_dir_fn)(pe32_u32 fd, char *name,
+                                   pe32_u32 capacity, struct pe32_io_stat *stat);
 
 void pe32_io_set_backend(pe32_io_read_fn read_fn, pe32_io_write_fn write_fn,
                          pe32_io_type_fn type_fn);
@@ -70,6 +88,8 @@ void pe32_io_set_file_backend(pe32_io_open_read_fn open_read,
                               pe32_io_seek_fn seek_fn,
                               pe32_io_size_fn size_fn);
 void pe32_io_set_stat_backend(pe32_io_stat_fn stat_fn);
+void pe32_io_set_directory_backend(pe32_io_open_dir_fn open_dir,
+                                   pe32_io_next_dir_fn next_dir);
 void pe32_io_reset(void);
 void pe32_io_set_image_path(const char *image_path);
 
@@ -98,5 +118,10 @@ pe32_u32 PE32_WINAPI pe32_win32_get_file_time(
     struct pe32_filetime *access, struct pe32_filetime *write);
 pe32_u32 PE32_WINAPI pe32_win32_get_file_information_by_handle(
     pe32_u32 handle, struct pe32_file_information *information);
+pe32_u32 PE32_WINAPI pe32_win32_find_first_file_a(
+    const char *pattern, struct pe32_find_data_a *data);
+pe32_u32 PE32_WINAPI pe32_win32_find_next_file_a(
+    pe32_u32 handle, struct pe32_find_data_a *data);
+pe32_u32 PE32_WINAPI pe32_win32_find_close(pe32_u32 handle);
 
 #endif

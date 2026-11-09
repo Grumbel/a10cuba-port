@@ -28,9 +28,9 @@ enum {
     SYS_READ = 3, SYS_WRITE = 4, SYS_OPEN = 5,
     SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90,
     SYS_MUNMAP = 91, SYS_LLSEEK = 140, SYS_FSTAT64 = 197,
-    SYS_OPENAT = 295,
+    SYS_OPENAT = 295, SYS_GETDENTS64 = 220,
     O_DIRECTORY = 00200000, O_NOFOLLOW = 00400000,
-    O_CLOEXEC = 02000000,
+    O_CLOEXEC = 02000000, O_NONBLOCK = 00004000,
     PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4,
     MAP_PRIVATE = 2, MAP_ANONYMOUS = 0x20, MAP_FIXED_NOREPLACE = 0x100000,
     MAX_FILE_SIZE = 64 * 1024 * 1024,
@@ -200,7 +200,8 @@ static s32 type_standard_fd(u32 fd)
     return PE32_FILE_TYPE_UNKNOWN;
 }
 
-static s32 open_game_read(const char *root, const char *relative)
+static s32 open_game_path(const char *root, const char *relative,
+                          int directory)
 {
     /* Reject symlinks for every component. A game path cannot escape its
      * executable directory, even when a directory entry is a symlink.
@@ -208,6 +209,9 @@ static s32 open_game_read(const char *root, const char *relative)
     s32 fd = syscall3(SYS_OPEN, (u32)root,
                       O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, 0);
     if (fd < 0) {
+        return fd;
+    }
+    if (directory && relative[0] == '.' && !relative[1]) {
         return fd;
     }
     while (*relative) {
@@ -225,6 +229,8 @@ static s32 open_game_read(const char *root, const char *relative)
         if (*relative == '/') {
             flags |= O_DIRECTORY;
             ++relative;
+        } else if (directory) {
+            flags |= O_DIRECTORY;
         }
         next = syscall4(SYS_OPENAT, (u32)fd, (u32)component, flags, 0);
         (void)syscall1(SYS_CLOSE, (u32)fd);
@@ -236,12 +242,23 @@ static s32 open_game_read(const char *root, const char *relative)
     {
         u8 stat_bytes[128];
         s32 result = syscall2(SYS_FSTAT64, (u32)fd, (u32)stat_bytes);
-        if (result < 0 || (read32(stat_bytes + 16) & 0170000u) != 0100000u) {
+        u32 desired = directory ? 0040000u : 0100000u;
+        if (result < 0 || (read32(stat_bytes + 16) & 0170000u) != desired) {
             (void)syscall1(SYS_CLOSE, (u32)fd);
             return result < 0 ? result : -21; /* EISDIR/nonregular */
         }
     }
     return fd;
+}
+
+static s32 open_game_read(const char *root, const char *relative)
+{
+    return open_game_path(root, relative, 0);
+}
+
+static s32 open_game_directory(const char *root, const char *relative)
+{
+    return open_game_path(root, relative, 1);
 }
 
 static s32 close_game_fd(u32 fd)
@@ -294,6 +311,73 @@ static s32 stat_game_fd(u32 fd, struct pe32_io_stat *stat)
     stat->write_seconds = read32(bytes + 72);
     stat->write_nanoseconds = read32(bytes + 76);
     return 0;
+}
+
+static s32 next_game_directory(u32 directory_fd, char *name, u32 capacity,
+                               struct pe32_io_stat *stat)
+{
+    /* Linux getdents64 advances to the end of the returned batch. On each
+     * successful entry, seek back to that entry's d_off (its successor) so
+     * the next call can resume without retaining a buffer across calls. */
+    u8 records[1024];
+    for (;;) {
+        s32 length = syscall3(SYS_GETDENTS64, directory_fd,
+                              (u32)records, sizeof(records));
+        u32 offset = 0;
+        if (length <= 0) {
+            return length;
+        }
+        while (offset < (u32)length) {
+            const u8 *record = records + offset;
+            u32 record_length, filename_length = 0;
+            s32 fd, result;
+            if ((u32)length - offset < 20) {
+                return -22; /* Invalid kernel dirent: EINVAL. */
+            }
+            record_length = read16(record + 16);
+            if (record_length < 20 || record_length > (u32)length - offset) {
+                return -22;
+            }
+            while (19 + filename_length < record_length &&
+                   record[19 + filename_length]) {
+                ++filename_length;
+            }
+            offset += record_length;
+            if (19 + filename_length == record_length || !filename_length ||
+                filename_length >= capacity ||
+                (filename_length == 1 && record[19] == '.') ||
+                (filename_length == 2 && record[19] == '.' && record[20] == '.')) {
+                continue;
+            }
+            /* Skip known non-file types; the fstat64 check handles DT_UNKNOWN. */
+            if (record[18] && record[18] != 4 && record[18] != 8) {
+                continue;
+            }
+            for (u32 i = 0; i < filename_length; ++i) {
+                name[i] = (char)record[19 + i];
+            }
+            name[filename_length] = 0;
+            fd = syscall4(SYS_OPENAT, directory_fd, (u32)name,
+                          O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0);
+            if (fd < 0) {
+                continue; /* Unreadable entry or symlink: never follow it. */
+            }
+            result = stat_game_fd((u32)fd, stat);
+            (void)syscall1(SYS_CLOSE, (u32)fd);
+            if (result < 0 ||
+                ((stat->mode & 0170000u) != 0100000u &&
+                 (stat->mode & 0170000u) != 0040000u)) {
+                continue;
+            }
+            {
+                u32 position[2];
+                result = syscall5(SYS_LLSEEK, directory_fd,
+                                  read32(record + 12), read32(record + 8),
+                                  (u32)position, 0);
+            }
+            return result < 0 ? result : 1;
+        }
+    }
 }
 
 static void write32(u8 *data, u32 value)
@@ -603,6 +687,7 @@ int pe32_main(int argc, char **argv)
     pe32_io_set_file_backend(open_game_read, close_game_fd,
                              seek_game_fd, size_game_fd);
     pe32_io_set_stat_backend(stat_game_fd);
+    pe32_io_set_directory_backend(open_game_directory, next_game_directory);
     if (argc < 2 || argc > 5) {
         print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
         return 2;

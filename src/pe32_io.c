@@ -11,6 +11,7 @@ enum {
     ERROR_SUCCESS = 0,
     ERROR_INVALID_HANDLE = 6,
     ERROR_FILE_NOT_FOUND = 2,
+    ERROR_NO_MORE_FILES = 18,
     ERROR_PATH_NOT_FOUND = 3,
     ERROR_TOO_MANY_OPEN_FILES = 4,
     ERROR_ACCESS_DENIED = 5,
@@ -43,6 +44,8 @@ enum {
     STD_HANDLE_COUNT = 3,
     FILE_HANDLE_BASE = 0x2000,
     FILE_SLOT_COUNT = 64,
+    FIND_HANDLE_BASE = 0x3000,
+    FIND_SLOT_COUNT = 32,
     PATH_CAPACITY = 4096,
     OPEN_EXISTING = 3
 };
@@ -55,6 +58,8 @@ static pe32_io_close_fn backend_close;
 static pe32_io_seek_fn backend_seek;
 static pe32_io_size_fn backend_size;
 static pe32_io_stat_fn backend_stat;
+static pe32_io_open_dir_fn backend_open_dir;
+static pe32_io_next_dir_fn backend_next_dir;
 static pe32_u32 current_std_handles[STD_HANDLE_COUNT];
 static pe32_u8 open_std_handles[STD_HANDLE_COUNT];
 static char game_root[PATH_CAPACITY];
@@ -63,6 +68,11 @@ static struct {
     pe32_u32 active;
     pe32_u32 readable;
 } file_slots[FILE_SLOT_COUNT];
+static struct {
+    pe32_u32 fd;
+    pe32_u32 active;
+    char pattern[260];
+} find_slots[FIND_SLOT_COUNT];
 
 static int index_for_selector(pe32_u32 selector)
 {
@@ -96,6 +106,18 @@ static int file_slot_for_handle(pe32_u32 handle)
     }
     slot = (handle - FILE_HANDLE_BASE) / HANDLE_STEP;
     return file_slots[slot].active ? (int)slot : -1;
+}
+
+static int find_slot_for_handle(pe32_u32 handle)
+{
+    pe32_u32 slot;
+    if (handle < FIND_HANDLE_BASE ||
+        handle >= FIND_HANDLE_BASE + FIND_SLOT_COUNT * HANDLE_STEP ||
+        (handle - FIND_HANDLE_BASE) % HANDLE_STEP) {
+        return -1;
+    }
+    slot = (handle - FIND_HANDLE_BASE) / HANDLE_STEP;
+    return find_slots[slot].active ? (int)slot : -1;
 }
 
 static int fd_for_handle(pe32_u32 handle, pe32_u32 *fd, int *readonly)
@@ -207,6 +229,13 @@ void pe32_io_set_stat_backend(pe32_io_stat_fn stat_fn)
     backend_stat = stat_fn;
 }
 
+void pe32_io_set_directory_backend(pe32_io_open_dir_fn open_dir,
+                                   pe32_io_next_dir_fn next_dir)
+{
+    backend_open_dir = open_dir;
+    backend_next_dir = next_dir;
+}
+
 void pe32_io_reset(void)
 {
     pe32_u32 i;
@@ -215,6 +244,12 @@ void pe32_io_reset(void)
             (void)backend_close(file_slots[i].fd);
         }
         file_slots[i].active = 0;
+    }
+    for (i = 0; i < FIND_SLOT_COUNT; ++i) {
+        if (find_slots[i].active && backend_close) {
+            (void)backend_close(find_slots[i].fd);
+        }
+        find_slots[i].active = 0;
     }
     for (i = 0; i < STD_HANDLE_COUNT; ++i) {
         current_std_handles[i] = HANDLE_BASE + i * HANDLE_STEP;
@@ -607,5 +642,215 @@ pe32_u32 PE32_WINAPI pe32_win32_get_file_information_by_handle(
     information->number_of_links = stat.links;
     information->index_high = stat.inode_high;
     information->index_low = stat.inode_low;
+    return 1;
+}
+
+/* Win32 filename search uses case-insensitive matching. Only * and ? are
+ * implemented; DOS wildcard subtleties and short 8.3 aliases are not yet
+ * emulated. Win32's *.* accepts extensionless entries too. */
+static unsigned char fold_ascii(unsigned char ch)
+{
+    return ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch;
+}
+
+static int wildcard_matches(const char *pattern, const char *name)
+{
+    const char *star = 0, *retry = 0;
+    if (pattern[0] == '*' && pattern[1] == '.' &&
+        pattern[2] == '*' && !pattern[3]) {
+        return 1;
+    }
+    while (*name) {
+        if (*pattern == '?' ||
+            (*pattern && fold_ascii((unsigned char)*pattern) ==
+                         fold_ascii((unsigned char)*name))) {
+            ++pattern;
+            ++name;
+        } else if (*pattern == '*') {
+            star = pattern++;
+            retry = name;
+        } else if (star) {
+            pattern = star + 1;
+            name = ++retry;
+        } else {
+            return 0;
+        }
+    }
+    while (*pattern == '*') {
+        ++pattern;
+    }
+    return !*pattern;
+}
+
+static int split_find_path(const char *path, char *directory, char *pattern)
+{
+    pe32_u32 length = 0, last_separator = 0, i, count;
+    char prefix[PATH_CAPACITY];
+    if (!path || !path[0] || path[0] == '/' || path[0] == '\\') {
+        return 0;
+    }
+    while (path[length] && length < PATH_CAPACITY) {
+        if (path[length] == '/' || path[length] == '\\') {
+            last_separator = length + 1;
+        }
+        ++length;
+    }
+    if (length == PATH_CAPACITY || length == last_separator) {
+        return 0;
+    }
+    count = length - last_separator;
+    if (count > 255 || !count ||
+        (count == 1 && path[last_separator] == '.') ||
+        (count == 2 && path[last_separator] == '.' &&
+         path[last_separator + 1] == '.')) {
+        return 0;
+    }
+    for (i = 0; i < count; ++i) {
+        unsigned char ch = (unsigned char)path[last_separator + i];
+        if (ch < 32 || ch == ':' || ch == '"' || ch == '<' ||
+            ch == '>' || ch == '|') {
+            return 0;
+        }
+        pattern[i] = (char)ch;
+    }
+    pattern[count] = 0;
+    if (!last_separator ||
+        (last_separator == 2 && path[0] == '.')) {
+        directory[0] = '.';
+        directory[1] = 0;
+        return 1;
+    }
+    for (i = 0; i < last_separator - 1; ++i) {
+        prefix[i] = path[i];
+    }
+    prefix[last_separator - 1] = 0;
+    return normalize_relative_path(prefix, directory);
+}
+
+static void fill_find_data(struct pe32_find_data_a *data, const char *name,
+                           const struct pe32_io_stat *stat)
+{
+    pe32_u32 i;
+    unsigned char *bytes = (unsigned char *)data;
+    for (i = 0; i < sizeof(*data); ++i) {
+        bytes[i] = 0;
+    }
+    data->attributes = (stat->mode & 0170000u) == 0040000u ? 0x10u : 0x20u;
+    if (!(stat->mode & 0222u)) {
+        data->attributes |= 1u;
+    }
+    data->size_low = stat->size_low;
+    data->size_high = stat->size_high;
+    data->write_time = unix_filetime(stat->write_seconds,
+                                     stat->write_nanoseconds);
+    data->creation_time = data->write_time;
+    data->access_time = unix_filetime(stat->access_seconds,
+                                      stat->access_nanoseconds);
+    for (i = 0; i < sizeof(data->filename) - 1 && name[i]; ++i) {
+        data->filename[i] = name[i];
+    }
+}
+
+static int find_next_match(pe32_u32 slot, struct pe32_find_data_a *data,
+                           pe32_u32 no_match_error)
+{
+    for (;;) {
+        char name[260];
+        struct pe32_io_stat stat;
+        int result = backend_next_dir(find_slots[slot].fd, name,
+                                       sizeof(name), &stat);
+        if (result < 0) {
+            pe32_win32_set_last_error(win32_io_error(-result));
+            return 0;
+        }
+        if (!result) {
+            pe32_win32_set_last_error(no_match_error);
+            return 0;
+        }
+        if (name[0] && wildcard_matches(find_slots[slot].pattern, name)) {
+            fill_find_data(data, name, &stat);
+            return 1;
+        }
+    }
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_find_first_file_a(
+    const char *path, struct pe32_find_data_a *data)
+{
+    char directory[PATH_CAPACITY], pattern[260];
+    pe32_u32 slot;
+    int fd;
+    if (!data) {
+        pe32_win32_set_last_error(ERROR_INVALID_PARAMETER);
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    if (!split_find_path(path, directory, pattern)) {
+        pe32_win32_set_last_error(ERROR_INVALID_NAME);
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    if (!game_root[0] || !backend_open_dir || !backend_next_dir ||
+        !backend_close) {
+        pe32_win32_set_last_error(ERROR_PATH_NOT_FOUND);
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    for (slot = 0; slot < FIND_SLOT_COUNT; ++slot) {
+        if (!find_slots[slot].active) {
+            break;
+        }
+    }
+    if (slot == FIND_SLOT_COUNT) {
+        pe32_win32_set_last_error(ERROR_TOO_MANY_OPEN_FILES);
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    fd = backend_open_dir(game_root, directory);
+    if (fd < 0) {
+        pe32_win32_set_last_error(win32_io_error(-fd));
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    find_slots[slot].fd = (pe32_u32)fd;
+    find_slots[slot].active = 1;
+    for (pe32_u32 i = 0; i < sizeof(pattern); ++i) {
+        find_slots[slot].pattern[i] = pattern[i];
+        if (!pattern[i]) {
+            break;
+        }
+    }
+    if (!find_next_match(slot, data, ERROR_FILE_NOT_FOUND)) {
+        (void)backend_close(find_slots[slot].fd);
+        find_slots[slot].active = 0;
+        return PE32_INVALID_HANDLE_VALUE;
+    }
+    return FIND_HANDLE_BASE + slot * HANDLE_STEP;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_find_next_file_a(
+    pe32_u32 handle, struct pe32_find_data_a *data)
+{
+    int slot = find_slot_for_handle(handle);
+    if (slot < 0) {
+        pe32_win32_set_last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    if (!data) {
+        pe32_win32_set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return find_next_match((pe32_u32)slot, data, ERROR_NO_MORE_FILES);
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_find_close(pe32_u32 handle)
+{
+    int slot = find_slot_for_handle(handle);
+    int result;
+    if (slot < 0 || !backend_close) {
+        pe32_win32_set_last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    result = backend_close(find_slots[slot].fd);
+    if (result < 0) {
+        pe32_win32_set_last_error(win32_io_error(-result));
+        return 0;
+    }
+    find_slots[slot].active = 0;
     return 1;
 }

@@ -46,7 +46,11 @@ components, and does not support file creation, writes, sharing semantics,
 overlapped I/O or a Win32 console. `GetFileTime` and
 `GetFileInformationByHandle` report native file metadata in Win32 structures;
 creation time is approximated by the last modification time and the virtual
-volume serial number is currently zero.
+volume serial number is currently zero. `FindFirstFileA`, `FindNextFileA` and
+`FindClose` enumerate regular files and directories with case-insensitive
+ASCII `*`/`?` filename matching, including Win32's extensionless `*.*` rule.
+The search directory still requires exact Linux filename case; symlinks,
+8.3 aliases and extended DOS wildcard semantics are not emulated.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

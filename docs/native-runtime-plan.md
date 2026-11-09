@@ -44,7 +44,7 @@ The repository now has:
   table. It never silently stubs an unknown Windows API. An optional external
   resolver can supply **explicitly implemented** platform shim addresses.
 - `src/pe32_win32.h` and `src/pe32_win32.c`: a deliberately narrow `stdcall`
-  `KERNEL32.dll` shim with **47** exact exports. The preloaded-module registry
+  `KERNEL32.dll` shim with **50** exact exports. The preloaded-module registry
   supports `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA`; the EXE
   uses the first two to locate the simulation exports. The registry returns
   image bases as Windows HMODULEs and supports named/ordinal lookups. The
@@ -84,10 +84,11 @@ The repository now has:
   inter-thread serialization, and it explicitly rejects executable heaps and
   exception-generating options until those semantics are implemented. The
   heap tests use an injectable memory backend on the host without 32-bit ELF.
-- `src/pe32_io.h` and `src/pe32_io.c`: twelve `KERNEL32.dll` functions:
+- `src/pe32_io.h` and `src/pe32_io.c`: fifteen `KERNEL32.dll` functions:
   `GetStdHandle`, `SetStdHandle`, `SetHandleCount`, `GetFileType`, `ReadFile`,
   `WriteFile`, `CloseHandle`, `CreateFileA`, `GetFileSize`, and
-  `SetFilePointer`, `GetFileTime`, and `GetFileInformationByHandle`.
+  `SetFilePointer`, `GetFileTime`, `GetFileInformationByHandle`,
+  `FindFirstFileA`, `FindNextFileA`, and `FindClose`.
   Synthetic Win32 handles initially map to inherited Linux
   fds 0/1/2, support rebinding standard slots, and are never passed directly
   to the Linux kernel. `CreateFileA` allocates separate Win32 handles for up
@@ -105,6 +106,16 @@ The repository now has:
   `stat64` does not provide creation/birth time, the reported creation time
   copies the last modification time; virtual volume serial is zero. These
   values are **approximations**, not a complete Windows volume implementation.
+  Read-only enumeration uses separate synthetic find handles and the native
+  Linux `getdents64` syscall, returning PE32 `WIN32_FIND_DATAA` records of
+  exactly 320 bytes. It supports simple relative directory patterns, ASCII
+  case-insensitive filename matching (`*`, `?`, and special `*.*` for all
+  names), and file/directory attributes with timestamps. Each entry is
+  inspected via no-follow `openat`/`fstat64`; symlinks are skipped. Searching
+  within a directory still requires its **exact Linux name case**, and DOS
+  wildcard subtleties, 8.3 aliases and directory listings via Windows drives
+  are not implemented. At most 32 independent find handles are available;
+  `FindClose` and shim reinitialization release them.
   Inherited streams use `read`, `write` and `fstat64`; all host tests inject
   fake I/O. `GetFileType` recognizes redirected regular files, terminals and
   pipes/sockets from the kernel's file mode. Synchronous reads return actual
@@ -140,7 +151,7 @@ The repository now has:
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution and 47 early Windows API implementations, but **no full** Win32 API
+import resolution and 50 early Windows API implementations, but **no full** Win32 API
 layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
 integration. The
 mapping currently uses writable/executable pages; treat the
@@ -190,8 +201,8 @@ verified `SIM_*` exports. Both have relocations and no TLS directory. Details
 and executable checksums are in [binary-investigation](binary-investigation.md).
 
 Of the **396 static imported symbols** in the original EXE and DLL combined,
-the 47-function shim covers **80 individual imports** (45 in the EXE,
-35 in the DLL). The other **316** imported symbols remain unsatisfied.
+the 50-function shim covers **83 individual imports** (48 in the EXE,
+35 in the DLL). The other **313** imported symbols remain unsatisfied.
 Even though both PE files have no *static TLS directory*, they import the
 `Tls*` functions for dynamically allocated runtime thread-local state.
 
@@ -212,7 +223,7 @@ A-10 code execution or SDL3 game output is claimed.
    function Win32/COM behavior requirements. Keep the files ignored.
 2. **Dual PE module loader (core linker and preloaded lookup implemented).**
    Both modules map; named and ordinal exports resolve, and the IAT is patched
-   with complete pre-validation. A 47-function, preloaded-only Kernel32
+   with complete pre-validation. A 50-function, preloaded-only Kernel32
    shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
    `A10Sim.dll` and basic single-thread CRT startup/TLS/error/heap handling. Host C tests
    pass. Remaining: execute the synthetic two-module, dynamic-lookup and TLS

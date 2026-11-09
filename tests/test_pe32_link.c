@@ -470,6 +470,79 @@ static struct {
 } fake_game_files[70];
 static pe32_u32 fake_game_opens;
 static pe32_u32 fake_game_closes;
+static struct {
+    int active;
+    int directory_kind;
+    unsigned cursor;
+} fake_directories[40];
+static unsigned fake_dir_opens;
+static unsigned fake_dir_closes;
+
+static const struct {
+    int directory_kind;
+    const char *name;
+    pe32_u32 mode;
+} directory_entries[] = {
+    {1, "Gear.wav", 0100444},
+    {1, "TAUNT2.WAV", 0100644},
+    {1, "README", 0100644},
+    {1, "Notes.txt", 0100644},
+    {1, "SubFolder", 0040755},
+    {2, "D-DropZone04.dmo", 0100644},
+    {2, "B-DropZone04.dmo", 0100644},
+    {0, "A10Cuba.exe", 0100644},
+    {0, "Media", 0040755},
+    {0, "Missions", 0040755},
+};
+
+static int fake_open_directory(const char *root, const char *relative)
+{
+    int kind;
+    unsigned index = fake_dir_opens;
+    assert(!strcmp(root, "/opt/games/A-10Cuba/"));
+    if (!strcmp(relative, "Media")) {
+        kind = 1;
+    } else if (!strcmp(relative, "Missions")) {
+        kind = 2;
+    } else if (!strcmp(relative, ".")) {
+        kind = 0;
+    } else {
+        return -2;
+    }
+    assert(index < sizeof(fake_directories) / sizeof(fake_directories[0]));
+    ++fake_dir_opens;
+    fake_directories[index].active = 1;
+    fake_directories[index].directory_kind = kind;
+    fake_directories[index].cursor = 0;
+    return (int)(200 + index);
+}
+
+static int fake_next_directory(pe32_u32 fd, char *name,
+                               pe32_u32 capacity, struct pe32_io_stat *stat)
+{
+    unsigned index = fd - 200;
+    if (fd < 200 || index >= fake_dir_opens || !fake_directories[index].active) {
+        return -9;
+    }
+    while (fake_directories[index].cursor <
+           sizeof(directory_entries) / sizeof(directory_entries[0])) {
+        unsigned i = fake_directories[index].cursor++;
+        if (directory_entries[i].directory_kind !=
+            fake_directories[index].directory_kind) {
+            continue;
+        }
+        assert(strlen(directory_entries[i].name) + 1 <= capacity);
+        strcpy(name, directory_entries[i].name);
+        memset(stat, 0, sizeof(*stat));
+        stat->mode = directory_entries[i].mode;
+        stat->links = 1;
+        stat->size_low = (pe32_u32)(strlen(name) + 100);
+        stat->write_seconds = 0;
+        stat->write_nanoseconds = 123456789;
+        return 1;
+    }
+    return 0;
+}
 
 static int fake_game_open(const char *root, const char *relative)
 {
@@ -494,6 +567,15 @@ static int fake_game_open(const char *root, const char *relative)
 
 static int fake_game_close(pe32_u32 fd)
 {
+    if (fd >= 200) {
+        unsigned index = fd - 200;
+        if (index >= fake_dir_opens || !fake_directories[index].active) {
+            return -9;
+        }
+        fake_directories[index].active = 0;
+        ++fake_dir_closes;
+        return 0;
+    }
     pe32_u32 index = fd - 10;
     if (fd < 10 || index >= fake_game_opens || !fake_game_files[index].active) {
         return -9;
@@ -857,6 +939,105 @@ static void test_win32_readonly_game_files(void)
     pe32_io_set_backend(0, 0, 0);
 }
 
+static void test_win32_find_game_files(void)
+{
+    struct pe32_module modules[] = {exe, dll};
+    struct pe32_find_data_a data;
+    pe32_u32 first, handle, handles[32];
+    int seen_readme = 0, seen_folder = 0;
+    unsigned count, i;
+    modules[0].path = "/opt/games/A-10Cuba/A10Cuba.exe";
+    fake_dir_opens = fake_dir_closes = 0;
+    memset(fake_directories, 0, sizeof(fake_directories));
+    pe32_io_set_file_backend(fake_game_open, fake_game_close,
+                             fake_game_seek, fake_game_size);
+    pe32_io_set_directory_backend(fake_open_directory, fake_next_directory);
+    pe32_win32_initialize(modules, 2);
+    assert(sizeof(struct pe32_find_data_a) == 320);
+    assert(pe32_win32_find_first_file_a(0, &data) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 123);
+    assert(pe32_win32_find_first_file_a("/etc/*", &data) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("Media/../*", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("Media/*/*.wav", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("Media/", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("C:\\*", &data) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("Media/*.wav", 0)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!fake_dir_opens);
+
+    memset(&data, 0xff, sizeof(data));
+    first = pe32_win32_find_first_file_a("Media\\*.WaV", &data);
+    assert(first != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "Gear.wav"));
+    assert(data.attributes == 0x21);
+    assert(data.size_low == strlen(data.filename) + 100);
+    assert(data.size_high == 0);
+    assert(data.alternate_filename[0] == 0);
+    assert(data.reserved0 == 0 && data.reserved1 == 0);
+    assert(pe32_win32_find_next_file_a(first, &data));
+    assert(!strcmp(data.filename, "TAUNT2.WAV"));
+    assert(data.attributes == 0x20);
+    assert(!pe32_win32_find_next_file_a(first, &data));
+    assert(pe32_win32_get_last_error() == 18); /* ERROR_NO_MORE_FILES */
+    assert(!pe32_win32_close_handle(first)); /* FindClose, not CloseHandle. */
+    assert(pe32_win32_get_last_error() == 6);
+    assert(!pe32_win32_find_next_file_a(first, 0));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_find_close(first));
+    assert(!pe32_win32_find_close(first));
+    assert(pe32_win32_get_last_error() == 6);
+
+    handle = pe32_win32_find_first_file_a("Media\\*.*", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    count = 0;
+    do {
+        ++count;
+        if (!strcmp(data.filename, "README")) {
+            seen_readme = 1; /* *.* matches extensionless names on Win32. */
+        }
+        if (!strcmp(data.filename, "SubFolder")) {
+            seen_folder = 1;
+            assert(data.attributes == 0x10);
+        }
+    } while (pe32_win32_find_next_file_a(handle, &data));
+    assert(count == 5 && seen_readme && seen_folder);
+    assert(pe32_win32_find_close(handle));
+
+    handle = pe32_win32_find_first_file_a("Missions\\D-????Zone04.dmo", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "D-DropZone04.dmo"));
+    assert(!pe32_win32_find_next_file_a(handle, &data));
+    assert(pe32_win32_find_close(handle));
+    handle = pe32_win32_find_first_file_a(".\\A10CUBA.exe", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "A10Cuba.exe"));
+    assert(pe32_win32_find_close(handle));
+    assert(pe32_win32_find_first_file_a("Media/absent*.dmo", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 2); /* ERROR_FILE_NOT_FOUND */
+    assert(pe32_win32_find_first_file_a("Unlisted/*", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 2);
+
+    for (i = 0; i < 32; ++i) {
+        handles[i] = pe32_win32_find_first_file_a("Media/*.wav", &data);
+        assert(handles[i] != PE32_INVALID_HANDLE_VALUE);
+    }
+    assert(pe32_win32_find_first_file_a("Media/*.wav", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 4); /* Guest table full. */
+    pe32_win32_initialize(0, 0); /* Cleanup leaked find handles. */
+    assert(fake_dir_opens == fake_dir_closes);
+    assert(!pe32_win32_find_next_file_a(handles[0], &data));
+    assert(pe32_win32_get_last_error() == 6);
+    pe32_io_set_directory_backend(0, 0);
+    pe32_io_set_file_backend(0, 0, 0, 0);
+}
+
 static void test_win32_private_heaps(void)
 {
     void *heap, *second_heap;
@@ -986,6 +1167,7 @@ int main(void)
     test_win32_single_thread_critical_sections();
     test_win32_standard_io();
     test_win32_readonly_game_files();
+    test_win32_find_game_files();
     test_win32_private_heaps();
     puts("PE32 linker: imports, DLL lookup, startup, strings, synchronization, I/O, TLS, heaps and bounds tests passed");
     return 0;

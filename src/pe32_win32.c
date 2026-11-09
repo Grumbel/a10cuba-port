@@ -462,6 +462,9 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("GetFileTime", pe32_win32_get_file_time)
     EXPOSE_KERNEL32("GetFileInformationByHandle",
                     pe32_win32_get_file_information_by_handle)
+    EXPOSE_KERNEL32("FindFirstFileA", pe32_win32_find_first_file_a)
+    EXPOSE_KERNEL32("FindNextFileA", pe32_win32_find_next_file_a)
+    EXPOSE_KERNEL32("FindClose", pe32_win32_find_close)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else
