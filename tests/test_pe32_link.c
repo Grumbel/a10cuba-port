@@ -4,10 +4,32 @@
 /* Host-native tests of the exact resolver built into the Linux/i386 loader. */
 #include "pe32_link.h"
 #include "pe32_win32.h"
+#include "pe32_heap.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+static unsigned mapped_regions;
+static unsigned unmapped_regions;
+
+static void *host_heap_map(pe32_u32 size)
+{
+    void *memory = malloc(size);
+    if (memory) {
+        ++mapped_regions;
+    }
+    return memory;
+}
+
+static void host_heap_unmap(void *memory, pe32_u32 size)
+{
+    (void)size;
+    ++unmapped_regions;
+    free(memory);
+}
 
 static pe32_u8 dll_image[0x1000];
 static pe32_u8 exe_image[0x1000];
@@ -276,6 +298,121 @@ static void test_win32_tls_and_last_error(void)
     assert(pe32_win32_get_last_error() == 0);
 }
 
+static void test_win32_private_heaps(void)
+{
+    void *heap, *second_heap;
+    void *blocks[20];
+    void *neighbor, *fence;
+    unsigned char *a, *b, *guard, *moved, *zero;
+    unsigned char *filled;
+    unsigned i;
+    mapped_regions = unmapped_regions = 0;
+    pe32_heap_set_backend(host_heap_map, host_heap_unmap);
+    pe32_win32_initialize(0, 0);
+
+    pe32_win32_set_last_error(0xfefe);
+    assert(!pe32_win32_heap_create(0x40000, 0, 0)); /* Executable unsupported. */
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!pe32_win32_heap_create(0, 4096, 4096));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!pe32_win32_heap_create(4, 0, 0)); /* Cannot raise SEH. */
+    assert(pe32_win32_get_last_error() == 87);
+
+    heap = pe32_win32_heap_create(0, 0, 0);
+    second_heap = pe32_win32_heap_create(1, 0, 8192);
+    assert(heap && second_heap && heap != second_heap);
+    assert(pe32_win32_heap_alloc(heap, 0, 0) != 0);
+
+    a = pe32_win32_heap_alloc(heap, 8, 23);
+    b = pe32_win32_heap_alloc(heap, 0, 40);
+    guard = pe32_win32_heap_alloc(heap, 0, 16);
+    assert(a && b && guard);
+    assert(((uintptr_t)a & 7) == 0);
+    assert(((uintptr_t)b & 7) == 0);
+    assert(pe32_win32_heap_size(heap, 0, a) == 23);
+    assert(pe32_win32_heap_size(heap, 0, b) == 40);
+    assert(!pe32_win32_heap_alloc(heap, 0, 0xfffffffcu));
+    for (i = 0; i < 23; ++i) {
+        assert(a[i] == 0);
+        a[i] = (unsigned char)(i + 1);
+    }
+    memset(b, 0x92, 40);
+
+    /* HeapSize/Alloc/ReAlloc failures do not change last error. */
+    pe32_win32_set_last_error(0x1234);
+    assert(pe32_win32_heap_size(second_heap, 0, a) == 0xffffffffu);
+    assert(!pe32_win32_heap_alloc(second_heap, 0, 0x7fff8));
+    assert(!pe32_win32_heap_realloc(heap, 0x10, a, 100)); /* Guarded in place. */
+    assert(pe32_win32_get_last_error() == 0x1234);
+    assert(pe32_win32_heap_size(heap, 0, a) == 23);
+
+    moved = pe32_win32_heap_realloc(heap, 8, a, 100);
+    assert(moved && moved != a);
+    assert(pe32_win32_heap_size(heap, 0, moved) == 100);
+    for (i = 0; i < 100; ++i) {
+        assert(moved[i] == (i < 23 ? (unsigned char)(i + 1) : 0));
+    }
+    assert(pe32_win32_heap_size(heap, 0, a) == 0xffffffffu);
+    assert(pe32_win32_heap_free(heap, 0, a) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_heap_free(second_heap, 0, moved) == 0);
+    assert(pe32_win32_get_last_error() == 87);
+    neighbor = pe32_win32_heap_alloc(heap, 0, 40);
+    fence = pe32_win32_heap_alloc(heap, 0, 8);
+    assert(neighbor && fence);
+    assert(!pe32_win32_heap_realloc(heap, 0x10, moved, 112));
+
+    assert(pe32_win32_heap_free(heap, 0, b));
+    assert(pe32_win32_heap_free(heap, 0, neighbor));
+    /* Freed adjacent block now permits the in-place growth. */
+    filled = pe32_win32_heap_realloc(heap, 0x10 | 8, moved, 112);
+    assert(filled == moved);
+    assert(pe32_win32_heap_size(heap, 0, filled) == 112);
+    for (i = 100; i < 112; ++i) {
+        assert(filled[i] == 0);
+    }
+    assert(pe32_win32_heap_realloc(heap, 0, filled, 9) == filled);
+    assert(pe32_win32_heap_size(heap, 0, filled) == 9);
+    assert(!pe32_win32_heap_realloc(heap, 0x40000, filled, 12));
+    assert(pe32_win32_heap_size(heap, 0, filled) == 9);
+
+    zero = pe32_win32_heap_alloc(heap, 8, 32);
+    assert(zero);
+    for (i = 0; i < 32; ++i) {
+        assert(zero[i] == 0);
+    }
+    assert(pe32_win32_heap_free(heap, 0, zero));
+    assert(!pe32_win32_heap_free(heap, 8, filled));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_heap_free(heap, 0, filled));
+    assert(pe32_win32_heap_free(heap, 0, guard));
+    assert(pe32_win32_heap_free(heap, 0, fence));
+    assert(pe32_win32_heap_free(heap, 0, 0));
+
+    /* Span multiple 64-KiB segments, free every block, and reuse capacity. */
+    for (i = 0; i < 20; ++i) {
+        blocks[i] = pe32_win32_heap_alloc(heap, 0, 8192);
+        assert(blocks[i]);
+    }
+    for (i = 0; i < 20; ++i) {
+        assert(pe32_win32_heap_free(heap, 0, blocks[i]));
+    }
+    assert(pe32_win32_heap_alloc(heap, 0, 16000));
+
+    assert(pe32_win32_heap_alloc(second_heap, 0, 8170) == 0);
+    assert(pe32_win32_heap_alloc(second_heap, 0, 1024));
+    assert(pe32_win32_heap_destroy(second_heap));
+    assert(!pe32_win32_heap_destroy(second_heap));
+    assert(pe32_win32_get_last_error() == 6);
+    assert(pe32_win32_heap_destroy(heap));
+    assert(mapped_regions == unmapped_regions);
+    heap = pe32_win32_heap_create(0, 0, 0);
+    assert(pe32_win32_heap_alloc(heap, 0, 64));
+    pe32_win32_initialize(0, 0); /* Release leaked private heaps. */
+    assert(mapped_regions == unmapped_regions);
+    pe32_heap_set_backend(0, 0);
+}
+
 int main(void)
 {
     test_named_and_ordinal();
@@ -285,6 +422,7 @@ int main(void)
     test_explicit_host_resolver();
     test_preloaded_win32_module_lookups();
     test_win32_tls_and_last_error();
-    puts("PE32 module linker: imports, DLL lookup, TLS and bounds tests passed");
+    test_win32_private_heaps();
+    puts("PE32 module linker: imports, DLL lookup, TLS, heaps and bounds tests passed");
     return 0;
 }

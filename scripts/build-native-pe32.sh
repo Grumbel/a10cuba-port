@@ -15,5 +15,6 @@ mkdir -p "$(dirname -- "$output")"
     -fomit-frame-pointer -nostdlib -static -no-pie \
     -Wl,-e,_start -Wl,--build-id=none \
     "$repo_dir/src/pe32_start.S" "$repo_dir/src/pe32_native.c" \
-    "$repo_dir/src/pe32_link.c" "$repo_dir/src/pe32_win32.c" -o "$output"
+    "$repo_dir/src/pe32_link.c" "$repo_dir/src/pe32_win32.c" \
+    "$repo_dir/src/pe32_heap.c" -o "$output"
 printf 'Built %s\n' "$output"

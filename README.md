@@ -21,7 +21,10 @@ Linux/i386 runner can map two PE32 modules, apply their base relocations,
 resolve named/ordinal exports, and bind imports between supplied modules
 without a 32-bit C library. Minimal `LoadLibraryA`/`GetProcAddress`/
 `GetModuleHandleA` shims can find **preloaded** DLLs. Basic single-thread
-`Tls*` and last-error functions now support CRT bootstrap experiments.
+`Tls*`, last-error, and Linux-backed private-heap functions now support CRT
+bootstrap experiments. The heap adapter implements six functions used by both
+original game modules, but **does not** reproduce Windows heap reservation,
+threading, or structured-exception semantics.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

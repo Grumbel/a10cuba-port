@@ -6,13 +6,15 @@
  *
  * Maps/copies original x86 machine code, applies HIGHLOW base relocations,
  * resolves imports between supplied PE modules and can enter synthetic test
- * images. This is NOT a Windows process implementation: no PEB, TEB, SEH,
- * TLS, Win32 startup, COM or imported Windows OS APIs yet. It refuses to
- * execute images with unresolved imports or TLS.
+ * images. It refuses to execute images with unresolved imports or a PE TLS
+ * directory. Only a small single-thread Kernel32 subset (DLL lookup, dynamic
+ * TLS, errors and private heaps) is implemented. This is NOT a Windows
+ * process implementation: no PEB, TEB, SEH, CRT or COM startup yet.
  */
 
 #include "pe32_link.h"
 #include "pe32_win32.h"
+#include "pe32_heap.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -22,6 +24,7 @@ typedef signed int s32;
 enum {
     SYS_WRITE = 4, SYS_OPEN = 5,
     SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90,
+    SYS_MUNMAP = 91,
     PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4,
     MAP_PRIVATE = 2, MAP_ANONYMOUS = 0x20, MAP_FIXED_NOREPLACE = 0x100000,
     MAX_FILE_SIZE = 64 * 1024 * 1024,
@@ -43,6 +46,14 @@ static s32 syscall3(u32 number, u32 a, u32 b, u32 c)
     return result;
 }
 
+static s32 syscall2(u32 number, u32 a, u32 b)
+{
+    s32 result;
+    __asm__ volatile("int $0x80" : "=a"(result)
+                     : "0"(number), "b"(a), "c"(b) : "memory");
+    return result;
+}
+
 /* Linux i386's old_mmap syscall accepts one pointer to six 32-bit words. */
 static void *map_memory(u32 address, u32 length, u32 protection, u32 flags,
                         s32 fd)
@@ -50,6 +61,17 @@ static void *map_memory(u32 address, u32 length, u32 protection, u32 flags,
     u32 args[6] = { address, length, protection, flags, (u32)fd, 0 };
     u32 result = (u32)syscall1(SYS_OLD_MMAP, (u32)args);
     return result >= (u32)-4095 ? (void *)0 : (void *)result;
+}
+
+static void *map_heap_pages(u32 size)
+{
+    return map_memory(0, size, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1);
+}
+
+static void unmap_heap_pages(void *memory, u32 size)
+{
+    (void)syscall2(SYS_MUNMAP, (u32)memory, size);
 }
 
 static u32 string_length(const char *str)
@@ -421,6 +443,7 @@ int pe32_main(int argc, char **argv)
 {
     struct pe32_module modules[2] = { {0}, {0} };
     int module_count = 0, link = 0, execute = 0, i;
+    pe32_heap_set_backend(map_heap_pages, unmap_heap_pages);
     if (argc < 2 || argc > 5) {
         print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
         return 2;

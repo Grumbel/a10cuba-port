@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "pe32_win32.h"
+#include "pe32_heap.h"
 
 static const struct pe32_module *registered_modules;
 static pe32_u32 registered_count;
@@ -55,6 +56,7 @@ static int equal_ascii(const char *a, const char *b)
 void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
 {
     pe32_u32 i;
+    pe32_heap_reset();
     registered_modules = modules;
     registered_count = modules ? count : 0;
     current_last_error = 0;
@@ -185,6 +187,12 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("TlsFree", pe32_win32_tls_free)
     EXPOSE_KERNEL32("TlsGetValue", pe32_win32_tls_get_value)
     EXPOSE_KERNEL32("TlsSetValue", pe32_win32_tls_set_value)
+    EXPOSE_KERNEL32("HeapCreate", pe32_win32_heap_create)
+    EXPOSE_KERNEL32("HeapDestroy", pe32_win32_heap_destroy)
+    EXPOSE_KERNEL32("HeapAlloc", pe32_win32_heap_alloc)
+    EXPOSE_KERNEL32("HeapReAlloc", pe32_win32_heap_realloc)
+    EXPOSE_KERNEL32("HeapFree", pe32_win32_heap_free)
+    EXPOSE_KERNEL32("HeapSize", pe32_win32_heap_size)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

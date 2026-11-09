@@ -153,6 +153,55 @@ def tls_fixture():
     return bytes(data)
 
 
+def heap_fixture():
+    """Synthetic x86 entry calling five Win32 heap APIs via an imported IAT."""
+    base = 0x00400000
+    data = bytearray(fixture(image_base=base))
+    opt = 0x98
+    struct.pack_into('<II', data, opt + 104, 0x2020, 40)
+    struct.pack_into('<IIIII', data, 0x420, 0x2080, 0, 0, 0x20a0, 0x2080)
+    names = ['HeapCreate', 'HeapAlloc', 'HeapSize', 'HeapFree', 'HeapDestroy']
+    for index, name in enumerate(names):
+        name_rva = 0x20c0 + 0x10 * index
+        struct.pack_into('<I', data, 0x480 + 4 * index, name_rva)
+        struct.pack_into('<H', data, 0x400 + name_rva - 0x2000, 0)
+        encoded = name.encode('ascii') + b'\0'
+        data[0x402 + name_rva - 0x2000:
+             0x402 + name_rva - 0x2000 + len(encoded)] = encoded
+    data[0x4a0:0x4ad] = b'KERNEL32.dll\0'
+
+    code = bytearray(b'\x53\x56\x31\xc0\x50\x50\x50')  # save, push 0/0/0
+    fixups = []
+
+    def call_import(index):
+        code.extend(b'\xff\x15')
+        fixups.append(0x1000 + len(code))
+        code.extend(struct.pack('<I', base + 0x2080 + 4 * index))
+
+    call_import(0)  # HeapCreate(0, 0, 0) -> EBX
+    code.extend(b'\x89\xc3\x6a\x04\x6a\x08\x53')
+    call_import(1)  # HeapAlloc(heap, HEAP_ZERO_MEMORY, 4) -> ESI
+    code.extend(b'\x89\xc6\xc7\x06\x2a\x00\x00\x00')
+    code.extend(b'\x56\x6a\x00\x53')
+    call_import(2)  # HeapSize(heap, 0, ptr) -> 4
+    code.extend(b'\x83\xf8\x04\x75\x20')  # Exit with 0 on mismatch.
+    code.extend(b'\x56\x6a\x00\x53')
+    call_import(3)  # HeapFree(heap, 0, ptr)
+    code.extend(b'\x85\xc0\x74\x12')
+    code.extend(b'\x53')
+    call_import(4)  # HeapDestroy(heap)
+    code.extend(b'\x85\xc0\x74\x07\xb8\x2a\x00\x00\x00\xeb\x02')
+    code.extend(b'\x31\xc0\x5e\x5b\xc3')
+    data[0x200:0x200 + len(code)] = code
+    # Keep each absolute IAT operand correct when loader rebases the image.
+    entries = [0x3000 | (rva - 0x1000) for rva in fixups]
+    length = 8 + 2 * len(entries)
+    struct.pack_into('<II', data, opt + 136, 0x3000, length)
+    struct.pack_into('<II' + 'H' * len(entries), data, 0x600,
+                     0x1000, length, *entries)
+    return bytes(data)
+
+
 class ImportTests(unittest.TestCase):
     def test_no_imports(self):
         self.assertEqual(pe32_imports.PEImports(fixture()).imports(), [])
@@ -233,6 +282,12 @@ class ImportTests(unittest.TestCase):
         self.assertEqual([s['name'] for s in symbols],
                          ['TlsAlloc', 'TlsSetValue', 'TlsGetValue'])
 
+    def test_heap_fixture_imports(self):
+        symbols = pe32_imports.PEImports(heap_fixture()).imports()[0]['symbols']
+        self.assertEqual([s['name'] for s in symbols],
+                         ['HeapCreate', 'HeapAlloc', 'HeapSize', 'HeapFree',
+                          'HeapDestroy'])
+
     @unittest.skipUnless(shutil.which('objdump'), 'binutils objdump unavailable')
     def test_fixture_is_recognized_by_binutils(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -276,6 +331,12 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_tls_free', 4),
             ('pe32_win32_tls_get_value', 4),
             ('pe32_win32_tls_set_value', 8),
+            ('pe32_win32_heap_create', 12),
+            ('pe32_win32_heap_destroy', 4),
+            ('pe32_win32_heap_alloc', 12),
+            ('pe32_win32_heap_realloc', 16),
+            ('pe32_win32_heap_free', 12),
+            ('pe32_win32_heap_size', 12),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -355,6 +416,16 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn('linked KERNEL32.dll!TlsGetValue', result.stdout)
         self.assertIn('Entry returned 42', result.stdout)
 
+    def test_heap_imported_function_calls(self):
+        result = self.invoke(heap_fixture(), '--run-entry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('linked KERNEL32.dll!HeapCreate', result.stdout)
+        self.assertIn('linked KERNEL32.dll!HeapAlloc', result.stdout)
+        self.assertIn('linked KERNEL32.dll!HeapSize', result.stdout)
+        self.assertIn('linked KERNEL32.dll!HeapFree', result.stdout)
+        self.assertIn('linked KERNEL32.dll!HeapDestroy', result.stdout)
+        self.assertIn('Entry returned 42', result.stdout)
+
 
 class HostLinkerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
@@ -366,6 +437,7 @@ class HostLinkerTests(unittest.TestCase):
                 '-fsanitize=undefined', '-I', str(ROOT / 'src'),
                 str(ROOT / 'src/pe32_link.c'),
                 str(ROOT / 'src/pe32_win32.c'),
+                str(ROOT / 'src/pe32_heap.c'),
                 str(ROOT / 'tests/test_pe32_link.c'), '-o', str(runner)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
@@ -401,8 +473,9 @@ class OriginalDiscTests(unittest.TestCase):
                          (2, 61))
         implemented = {'LoadLibraryA', 'GetProcAddress', 'GetModuleHandleA',
                        'TlsAlloc', 'TlsFree', 'TlsGetValue', 'TlsSetValue',
-                       'SetLastError', 'GetLastError'}
-        for imports, count in ((exe_imports, 8), (dll_imports, 9)):
+                       'SetLastError', 'GetLastError', 'HeapCreate', 'HeapDestroy',
+                       'HeapAlloc', 'HeapReAlloc', 'HeapFree', 'HeapSize'}
+        for imports, count in ((exe_imports, 13), (dll_imports, 15)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {
@@ -460,7 +533,8 @@ class OriginalDiscTests(unittest.TestCase):
                 'gcc', '-shared', '-fPIC', '-std=c11', '-O2', '-Wall', '-Wextra',
                 '-Werror', '-I', str(ROOT / 'src'),
                 str(ROOT / 'src/pe32_link.c'),
-                str(ROOT / 'src/pe32_win32.c'), '-o', str(library)],
+                str(ROOT / 'src/pe32_win32.c'),
+                str(ROOT / 'src/pe32_heap.c'), '-o', str(library)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
             native = ctypes.CDLL(str(library))

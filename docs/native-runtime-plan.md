@@ -44,7 +44,7 @@ The repository now has:
   table. It never silently stubs an unknown Windows API. An optional external
   resolver can supply **explicitly implemented** platform shim addresses.
 - `src/pe32_win32.h` and `src/pe32_win32.c`: a deliberately narrow `stdcall`
-  `KERNEL32.dll` shim with **nine** exact exports. The preloaded-module registry
+  `KERNEL32.dll` shim with **15** exact exports. The preloaded-module registry
   supports `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA`; the EXE
   uses the first two to locate the simulation exports. The registry returns
   image bases as Windows HMODULEs and supports named/ordinal lookups. The
@@ -54,6 +54,16 @@ The repository now has:
   **does not** load binaries on demand, call `DllMain`, maintain reference
   counts, or isolate TLS and last-error state across Linux threads. The shim
   is usable for **single-thread bootstrap experiments only**.
+- `src/pe32_heap.h` and `src/pe32_heap.c`: six further `KERNEL32.dll` entry
+  points required by the original CRT: `HeapCreate`, `HeapDestroy`,
+  `HeapAlloc`, `HeapReAlloc`, `HeapFree`, and `HeapSize`. A Linux `mmap`/`munmap`
+  backend provides page-backed, 8-byte-aligned, split/coalescing reusable
+  blocks, with zero-fill, non-growable size limits, ownership checks,
+  in-place-only reallocations and teardown. This is **not** the Windows heap
+  implementation: its segment reservation strategy differs, it has no
+  inter-thread serialization, and it explicitly rejects executable heaps and
+  exception-generating options until those semantics are implemented. The
+  heap tests use an injectable memory backend on the host without 32-bit ELF.
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
@@ -64,7 +74,8 @@ The repository now has:
 - `tests/test_pe32_link.c` and `tests/test_pe32_native.py`: C linker tests run
   with the **host compiler and UBSan** (including successful name/ordinal
   binding, fake host import resolution, preloaded `LoadLibraryA`/
-  `GetProcAddress` lookups, TLS exhaustion/reuse/last-error contracts, and
+  `GetProcAddress` lookups, TLS exhaustion/reuse/last-error contracts, private
+  heap allocation/reallocation/free and bounds/last-error contracts, and
   refusal of malformed/missing/forwarded imports), plus PE32 synthetic
   fixtures, two-module imported-function calls, dynamic-DLL lookup and TLS
   imported-call execution tests.
@@ -72,7 +83,7 @@ The repository now has:
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution and nine early Windows API stubs, but **no full** Win32 API
+import resolution and 15 early Windows API stubs, but **no full** Win32 API
 layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
 integration. The
 mapping currently uses writable/executable pages; treat the
@@ -122,8 +133,8 @@ verified `SIM_*` exports. Both have relocations and no TLS directory. Details
 and executable checksums are in [binary-investigation](binary-investigation.md).
 
 Of the **396 static imported symbols** in the original EXE and DLL combined,
-the nine-function shim covers **17 individual imports** (eight in the EXE,
-nine in the DLL). The other **379** imported symbols remain unsatisfied.
+the 15-function shim covers **28 individual imports** (13 in the EXE,
+15 in the DLL). The other **368** imported symbols remain unsatisfied.
 Even though both PE files have no *static TLS directory*, they import the
 `Tls*` functions for dynamically allocated runtime thread-local state.
 
@@ -144,9 +155,9 @@ A-10 code execution or SDL3 game output is claimed.
    function Win32/COM behavior requirements. Keep the files ignored.
 2. **Dual PE module loader (core linker and preloaded lookup implemented).**
    Both modules map; named and ordinal exports resolve, and the IAT is patched
-   with complete pre-validation. A nine-function, preloaded-only Kernel32
+   with complete pre-validation. A 15-function, preloaded-only Kernel32
    shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
-   `A10Sim.dll` and basic single-thread CRT TLS/error handling. Host C tests
+   `A10Sim.dll` and basic single-thread CRT TLS/error/heap handling. Host C tests
    pass. Remaining: execute the synthetic two-module, dynamic-lookup and TLS
    tests on an i386-enabled host, validate actual mapped binaries, and
    implement full Win32 loading and the remaining platform imports.
@@ -187,6 +198,10 @@ instruction execution speed.
 - [Microsoft TlsGetValue API](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue)
   and [SetLastError API](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setlasterror)
   for thread-local storage and Win32 last-error contracts.
+- [Microsoft HeapAlloc API](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc),
+  [HeapReAlloc API](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heaprealloc),
+  and [HeapSize API](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapsize)
+  for the supported private-heap subset and its intentional limits.
 - [Microsoft DirectDraw surface API](https://learn.microsoft.com/en-us/windows/win32/api/ddraw/nn-ddraw-idirectdrawsurface7)
   for surface concepts (the actual game uses older interface versions).
 - [SDL3 surface API](https://wiki.libsdl.org/SDL3/SDL_CreateSurface)
