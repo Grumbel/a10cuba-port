@@ -19,8 +19,10 @@ This is the beginning of a **direct native x86** execution path, distinct from
 the existing Wine reference run and SDL3 bitmap viewer. The freestanding
 Linux/i386 runner can map two PE32 modules, apply their base relocations,
 resolve named/ordinal exports, and bind imports between supplied modules
-without a 32-bit C library. It **does not resolve Windows OS imports or
-execute the game**. See the [native runtime plan](docs/native-runtime-plan.md)
+without a 32-bit C library. Minimal `LoadLibraryA`/`GetProcAddress`/
+`GetModuleHandleA` shims can find **preloaded** DLLs. It **does not resolve the
+remaining Windows OS imports or execute the game**. See the
+[native runtime plan](docs/native-runtime-plan.md)
 for the exact scope and remaining work.
 
 ```sh

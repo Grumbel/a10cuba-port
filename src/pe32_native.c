@@ -12,6 +12,7 @@
  */
 
 #include "pe32_link.h"
+#include "pe32_win32.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -445,14 +446,17 @@ int pe32_main(int argc, char **argv)
         return 2;
     }
     if (link) {
+        pe32_win32_initialize(modules, (u32)module_count);
         for (i = 0; i < module_count; ++i) {
             enum pe32_link_status status;
             u32 linked_count = 0;
             print("Binding ");
             print(modules[i].path);
             print("...\n");
-            status = pe32_bind_imports(&modules[i], modules, (u32)module_count,
-                                       link_report, (void *)0, &linked_count);
+            status = pe32_bind_imports_with_host(
+                &modules[i], modules, (u32)module_count,
+                link_report, (void *)0, &linked_count,
+                pe32_win32_resolve_import, (void *)0);
             if (status != PE32_LINK_OK) {
                 print_error("PE32: module imports not fully resolved\n");
                 return 1;

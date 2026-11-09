@@ -178,15 +178,27 @@ enum pe32_link_status pe32_find_export(const struct pe32_module *module,
     return PE32_LINK_OK;
 }
 
-static const struct pe32_module *find_module(const char *name,
-                                             const struct pe32_module *modules,
-                                             pe32_u32 count)
+const struct pe32_module *pe32_find_module(const struct pe32_module *modules,
+                                           pe32_u32 count, const char *name)
 {
     pe32_u32 i;
     for (i = 0; i < count; ++i) {
         const char *export_name = pe32_export_module_name(&modules[i]);
         if (equal_names(name, export_name, 1) ||
+            equal_names(name, modules[i].path, 1) ||
             equal_names(name, basename(modules[i].path), 1)) {
+            return &modules[i];
+        }
+    }
+    return (const struct pe32_module *)0;
+}
+
+const struct pe32_module *pe32_find_module_base(const struct pe32_module *modules,
+                                                pe32_u32 count, pe32_u32 base)
+{
+    pe32_u32 i;
+    for (i = 0; i < count; ++i) {
+        if (modules[i].base == base) {
             return &modules[i];
         }
     }
@@ -197,7 +209,9 @@ static enum pe32_link_status bind_pass(struct pe32_module *target,
                                        const struct pe32_module *modules,
                                        pe32_u32 module_count,
                                        pe32_link_report report, void *context,
-                                       pe32_u32 *linked_count, int apply)
+                                       pe32_u32 *linked_count, int apply,
+                                       pe32_external_resolver resolver,
+                                       void *resolver_context)
 {
     pe32_u32 pos, count = 0;
     if (!target->import_rva && !target->import_size) {
@@ -230,7 +244,7 @@ static enum pe32_link_status bind_pass(struct pe32_module *target,
         if (!dll || !first) {
             return PE32_LINK_INVALID;
         }
-        source = find_module(dll, modules, module_count);
+        source = pe32_find_module(modules, module_count, dll);
         lookup_rva = original ? original : first;
         for (i = 0; i < target->size / 4; ++i) {
             pe32_u32 lookup, addr, ordinal = 0;
@@ -259,8 +273,13 @@ static enum pe32_link_status bind_pass(struct pe32_module *target,
                 }
             }
             addr = 0;
-            status = source ? pe32_find_export(source, name, ordinal, &addr) :
-                              PE32_LINK_MISSING;
+            if (source) {
+                status = pe32_find_export(source, name, ordinal, &addr);
+            } else if (resolver) {
+                status = resolver(resolver_context, dll, name, ordinal, &addr);
+            } else {
+                status = PE32_LINK_MISSING;
+            }
             if (!apply && status != PE32_LINK_OK) {
                 if (report) report(context, dll, name, ordinal, status, 0);
                 return status;
@@ -292,14 +311,26 @@ enum pe32_link_status pe32_bind_imports(struct pe32_module *target,
                                         pe32_link_report report, void *context,
                                         pe32_u32 *linked_count)
 {
+    return pe32_bind_imports_with_host(target, modules, module_count,
+                                       report, context, linked_count,
+                                       (pe32_external_resolver)0, (void *)0);
+}
+
+enum pe32_link_status pe32_bind_imports_with_host(
+    struct pe32_module *target, const struct pe32_module *modules,
+    pe32_u32 module_count, pe32_link_report report, void *report_context,
+    pe32_u32 *linked_count, pe32_external_resolver resolver,
+    void *resolver_context)
+{
     enum pe32_link_status status;
     if (linked_count) {
         *linked_count = 0;
     }
-    status = bind_pass(target, modules, module_count, report, context, 0, 0);
+    status = bind_pass(target, modules, module_count, report, report_context,
+                       0, 0, resolver, resolver_context);
     if (status != PE32_LINK_OK) {
         return status;
     }
-    return bind_pass(target, modules, module_count, report, context,
-                     linked_count, 1);
+    return bind_pass(target, modules, module_count, report, report_context,
+                     linked_count, 1, resolver, resolver_context);
 }

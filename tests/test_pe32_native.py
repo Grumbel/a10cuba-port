@@ -1,10 +1,12 @@
 """Synthetic PE32 fixtures for the native execution bootstrap and import tool."""
 
+import ctypes
 import errno
 import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -87,6 +89,43 @@ def fixture(*, image_base=0x00400000, relocated=False, imports=False,
     return bytes(data)
 
 
+def dynamic_lookup_fixtures():
+    """An EXE calling a preloaded DLL via synthetic Kernel32 imports.
+
+    Its x86 entry calls LoadLibraryA, GetProcAddress, then the returned
+    `_SIM_Init@4` function pointer. All absolute operands carry relocations.
+    """
+    base = 0x00400000
+    exe = bytearray(fixture(image_base=base))
+    opt = 0x98
+    struct.pack_into('<II', exe, opt + 104, 0x2020, 40)
+    struct.pack_into('<IIIII', exe, 0x420, 0x2080, 0, 0, 0x20a0, 0x2080)
+    struct.pack_into('<III', exe, 0x480, 0x20c0, 0x20d0, 0)
+    exe[0x4a0:0x4ad] = b'KERNEL32.dll\0'
+    struct.pack_into('<H', exe, 0x4c0, 0)
+    exe[0x4c2:0x4cf] = b'LoadLibraryA\0'
+    struct.pack_into('<H', exe, 0x4d0, 0)
+    exe[0x4d2:0x4e1] = b'GetProcAddress\0'
+    exe[0x500:0x50b] = b'A10Sim.dll\0'
+    exe[0x510:0x51c] = b'_SIM_Init@4\0'
+    exe[0x200:0x21e] = (b'\x53'                                # push ebx
+                         + b'\x68' + struct.pack('<I', base + 0x2100)
+                         + b'\xff\x15' + struct.pack('<I', base + 0x2080)
+                         + b'\x89\xc3'                           # mov ebx, eax
+                         + b'\x68' + struct.pack('<I', base + 0x2110)
+                         + b'\x53'                                # push ebx
+                         + b'\xff\x15' + struct.pack('<I', base + 0x2084)
+                         + b'\xff\xd0\x5b\xc3')                # call eax; pop ebx; ret
+    struct.pack_into('<II', exe, opt + 136, 0x3000, 16)
+    struct.pack_into('<IIHHHH', exe, 0x600, 0x1000, 16,
+                     0x3002, 0x3008, 0x300f, 0x3016)
+
+    dll = bytearray(fixture(image_base=0x10000000, exports=True))
+    dll[0x570:0x57b] = b'A10SIM.DLL\0'
+    dll[0x580:0x58c] = b'_SIM_Init@4\0'
+    return bytes(exe), bytes(dll)
+
+
 class ImportTests(unittest.TestCase):
     def test_no_imports(self):
         self.assertEqual(pe32_imports.PEImports(fixture()).imports(), [])
@@ -153,6 +192,15 @@ class ImportTests(unittest.TestCase):
             self.assertIn('user32.dll: 1 imports', result.stdout)
             self.assertIn('MessageBoxA', result.stdout)
 
+    def test_dynamic_lookup_fixture_imports_and_exports(self):
+        exe, dll = dynamic_lookup_fixtures()
+        imports = pe32_imports.PEImports(exe).imports()
+        self.assertEqual(imports[0]['dll'], 'KERNEL32.dll')
+        self.assertEqual([s['name'] for s in imports[0]['symbols']],
+                         ['LoadLibraryA', 'GetProcAddress'])
+        symbols = pe32_imports.PEImports(dll).exports()['symbols']
+        self.assertEqual(symbols[0]['names'], ['_SIM_Init@4'])
+
     @unittest.skipUnless(shutil.which('objdump'), 'binutils objdump unavailable')
     def test_fixture_is_recognized_by_binutils(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -183,6 +231,23 @@ class NativeRunnerTests(unittest.TestCase):
                 if exc.errno == errno.ENOEXEC:
                     self.skipTest('host kernel has no i386 ELF support; install qemu-i386 for test')
                 raise
+
+    @unittest.skipUnless(shutil.which('objdump'), 'objdump unavailable')
+    def test_win32_shim_i386_stdcall_stack_cleanup(self):
+        if not self.runner.is_file():
+            self.skipTest('build with scripts/build-native-pe32.sh first')
+        for name, stack_bytes in (
+            ('pe32_win32_load_library_a', 4),
+            ('pe32_win32_get_module_handle_a', 4),
+            ('pe32_win32_get_proc_address', 8),
+        ):
+            result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
+                                     str(self.runner)], capture_output=True,
+                                    text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'<{name}>:', result.stdout)
+            self.assertRegex(result.stdout, r'\bret\s+\$0x' +
+                             re.escape(format(stack_bytes, 'x')) + r'\b')
 
     def test_native_entry(self):
         result = self.invoke(fixture(), '--run-entry')
@@ -223,6 +288,29 @@ class NativeRunnerTests(unittest.TestCase):
             self.assertIn('linked user32.dll!MessageBoxA', result.stdout)
             self.assertIn('Entry returned 42', result.stdout)
 
+    def test_dynamic_load_and_get_proc_address(self):
+        if not self.runner.is_file():
+            self.skipTest('build with scripts/build-native-pe32.sh first')
+        with tempfile.TemporaryDirectory() as directory:
+            exe = Path(directory) / 'fixture.exe'
+            dll = Path(directory) / 'A10Sim.dll'
+            exe_bytes, dll_bytes = dynamic_lookup_fixtures()
+            exe.write_bytes(exe_bytes)
+            dll.write_bytes(dll_bytes)
+            command = ([self.qemu] if self.qemu else []) + [
+                str(self.runner), str(exe), str(dll), '--run-entry']
+            try:
+                result = subprocess.run(command, capture_output=True, text=True,
+                                        check=False)
+            except OSError as exc:
+                if exc.errno == errno.ENOEXEC:
+                    self.skipTest('host kernel has no i386 ELF support; install qemu-i386')
+                raise
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('linked KERNEL32.dll!LoadLibraryA', result.stdout)
+            self.assertIn('linked KERNEL32.dll!GetProcAddress', result.stdout)
+            self.assertIn('Entry returned 42', result.stdout)
+
 
 class HostLinkerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
@@ -233,6 +321,7 @@ class HostLinkerTests(unittest.TestCase):
                 'gcc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=undefined', '-I', str(ROOT / 'src'),
                 str(ROOT / 'src/pe32_link.c'),
+                str(ROOT / 'src/pe32_win32.c'),
                 str(ROOT / 'tests/test_pe32_link.c'), '-o', str(runner)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
@@ -276,6 +365,76 @@ class OriginalDiscTests(unittest.TestCase):
                 (['_SIM_ProcessEvent@16'], 0x136a0),
                 (['_SIM_Start@4'], 0x136c0),
             ])
+
+    @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
+    def test_real_dll_exports_via_compiled_c_resolver(self):
+        dll = ROOT / 'data/disc/A-10Cuba/A10Sim.dll'
+        if not dll.is_file():
+            self.skipTest('original DLL not present in ignored data/disc')
+        raw = dll.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != (
+            '3aefdc3f7c41bee8ae99d286230637b893ad22c027c99086ad33a6467c607f51'
+        ):
+            self.skipTest('different original DLL revision')
+        reader = pe32_imports.PEImports(raw)
+        optional = struct.unpack_from('<I', raw, 0x3c)[0] + 24
+        image_size = struct.unpack_from('<I', raw, optional + 56)[0]
+        image = bytearray(image_size)
+        image[:reader.header_size] = raw[:reader.header_size]
+        for rva, _, file_pos, raw_size in reader.sections:
+            self.assertLessEqual(rva + raw_size, image_size)
+            image[rva:rva + raw_size] = raw[file_pos:file_pos + raw_size]
+
+        class Module(ctypes.Structure):
+            _fields_ = [('image', ctypes.POINTER(ctypes.c_ubyte)),
+                        ('size', ctypes.c_uint32), ('base', ctypes.c_uint32),
+                        ('entry_rva', ctypes.c_uint32),
+                        ('export_rva', ctypes.c_uint32),
+                        ('export_size', ctypes.c_uint32),
+                        ('import_rva', ctypes.c_uint32),
+                        ('import_size', ctypes.c_uint32),
+                        ('tls_rva', ctypes.c_uint32),
+                        ('tls_size', ctypes.c_uint32), ('path', ctypes.c_char_p)]
+
+        memory = (ctypes.c_ubyte * len(image)).from_buffer(image)
+        module = Module(memory, len(image), 0x10000000, 0x8db10,
+                        reader.export_rva, reader.export_size,
+                        reader.import_rva, reader.import_size,
+                        0, 0, b'A10Sim.dll')
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / 'pe32-host-test.so'
+            build = subprocess.run([
+                'gcc', '-shared', '-fPIC', '-std=c11', '-O2', '-Wall', '-Wextra',
+                '-Werror', '-I', str(ROOT / 'src'),
+                str(ROOT / 'src/pe32_link.c'),
+                str(ROOT / 'src/pe32_win32.c'), '-o', str(library)],
+                capture_output=True, text=True, check=False)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            native = ctypes.CDLL(str(library))
+            native.pe32_find_export.argtypes = [ctypes.POINTER(Module),
+                                               ctypes.c_char_p, ctypes.c_uint32,
+                                               ctypes.POINTER(ctypes.c_uint32)]
+            native.pe32_find_export.restype = ctypes.c_int
+            native.pe32_win32_initialize.argtypes = [ctypes.POINTER(Module),
+                                                     ctypes.c_uint32]
+            native.pe32_win32_load_library_a.argtypes = [ctypes.c_char_p]
+            native.pe32_win32_load_library_a.restype = ctypes.c_uint32
+            native.pe32_win32_get_proc_address.argtypes = [ctypes.c_uint32,
+                                                          ctypes.c_char_p]
+            native.pe32_win32_get_proc_address.restype = ctypes.c_uint32
+            native.pe32_win32_initialize(ctypes.byref(module), 1)
+            handle = native.pe32_win32_load_library_a(b'A10SIM.DLL')
+            self.assertEqual(handle, 0x10000000)
+            for export in reader.exports()['symbols']:
+                symbol = export['names'][0].encode('ascii')
+                address = ctypes.c_uint32(0)
+                self.assertEqual(native.pe32_find_export(
+                    ctypes.byref(module), symbol, 0, ctypes.byref(address)), 0)
+                self.assertEqual(address.value, 0x10000000 + export['rva'])
+                self.assertEqual(native.pe32_win32_get_proc_address(handle, symbol),
+                                 address.value)
+            self.assertEqual(native.pe32_win32_get_proc_address(handle, b'MISSING'), 0)
+            native.pe32_win32_initialize(ctypes.POINTER(Module)(), 0)
 
 
 if __name__ == '__main__':

@@ -35,6 +35,16 @@ typedef void (*pe32_link_report)(void *context, const char *dll,
                                   enum pe32_link_status status,
                                   pe32_u32 address);
 
+typedef enum pe32_link_status (*pe32_external_resolver)(
+    void *context, const char *dll, const char *name, pe32_u32 ordinal,
+    pe32_u32 *address);
+
+/* Module names are case-insensitive; exported function names are not. */
+const struct pe32_module *pe32_find_module(const struct pe32_module *modules,
+                                           pe32_u32 count, const char *name);
+const struct pe32_module *pe32_find_module_base(const struct pe32_module *modules,
+                                                pe32_u32 count, pe32_u32 base);
+
 /* name != NULL selects exact, case-sensitive named lookup; otherwise ordinal. */
 enum pe32_link_status pe32_find_export(const struct pe32_module *module,
                                         const char *name, pe32_u32 ordinal,
@@ -51,5 +61,14 @@ enum pe32_link_status pe32_bind_imports(struct pe32_module *target,
                                         pe32_link_report report,
                                         void *context,
                                         pe32_u32 *linked_count);
+
+/* Add a resolver for explicitly supported platform shims (e.g. Kernel32).
+ * It must be side-effect-free: validation and binding each call it once.
+ * Missing functions still fail; no fabricated generic fallbacks. */
+enum pe32_link_status pe32_bind_imports_with_host(
+    struct pe32_module *target, const struct pe32_module *modules,
+    pe32_u32 module_count, pe32_link_report report, void *report_context,
+    pe32_u32 *linked_count, pe32_external_resolver resolver,
+    void *resolver_context);
 
 #endif

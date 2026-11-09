@@ -41,9 +41,16 @@ The repository now has:
   It looks up a DLL by its PE export name or case-insensitive filename,
   resolves exports by exact symbol name or ordinal, detects forwarded exports,
   and validates *all* imports before writing a target module's import address
-  table. It never silently stubs an unknown Windows API. This is also the
-  resolver needed by future `LoadLibraryA`/`GetProcAddress` shims: the actual
-  dynamic Win32 functions are **not** implemented yet.
+  table. It never silently stubs an unknown Windows API. An optional external
+  resolver can supply **explicitly implemented** platform shim addresses.
+- `src/pe32_win32.h` and `src/pe32_win32.c`: minimal `stdcall` i386 entry
+  points for `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA` with an
+  already-loaded module registry. The EXE uses the first two to locate the
+  simulation exports. The registry returns PE image bases as Windows HMODULEs
+  and supports both named and ordinal lookups, including case-insensitive DLL
+  names. **This does not load additional binaries on demand**, call `DllMain`,
+  maintain reference counts, or implement `GetLastError`. The IAT resolver
+  advertises only those three exact `KERNEL32.dll` symbols on Linux/i386.
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
@@ -53,14 +60,17 @@ The repository now has:
   This works even when the host cannot execute i386 Linux binaries.
 - `tests/test_pe32_link.c` and `tests/test_pe32_native.py`: C linker tests run
   with the **host compiler and UBSan** (including successful name/ordinal
-  binding and refusal of malformed/missing/forwarded imports), plus PE32
-  synthetic fixtures and two-module imported-function execution tests.
+  binding, fake host import resolution, preloaded `LoadLibraryA`/
+  `GetProcAddress` lookups, and refusal of malformed/missing/forwarded imports),
+  plus PE32 synthetic fixtures, two-module imported-function calls and
+  synthetic dynamic-DLL-lookup execution tests.
   Actual x86 entry tests run on an i386-enabled Linux kernel or through
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution, but **no** Win32 API layer, Windows exception/stack/thread
-setup, dynamic `LoadLibraryA`/`GetProcAddress`, or SDL3 integration. The
+import resolution and three tiny Windows API stubs, but **no full** Win32 API
+layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
+integration. The
 mapping currently uses writable/executable pages; treat the
 runner as a development experiment for trusted binaries, **not** a sandbox or
 secure loader for files from strangers. `--run-entry` should only be used with
@@ -122,12 +132,13 @@ A-10 code execution or SDL3 game output is claimed.
    sizes, DLL import counts, and DLL export names/RVAs. Remaining: import
    call-site prioritization, executable revision comparison and function-by-
    function Win32/COM behavior requirements. Keep the files ignored.
-2. **Dual PE module loader (core linker implemented).** Both modules map;
-   named and ordinal exports resolve, and the IAT is patched with complete
-   pre-validation. Host C tests pass. Remaining: execute synthetic two-module
-   test on a host that can run Linux/i386, validate actual mapped binaries,
-   and support dynamic Win32 loading and non-PE platform symbols. The EXE
-   uses `LoadLibraryA`/`GetProcAddress` for `A10Sim.dll`, not static imports.
+2. **Dual PE module loader (core linker and preloaded lookup implemented).**
+   Both modules map; named and ordinal exports resolve, and the IAT is patched
+   with complete pre-validation. A three-function preloaded-only Kernel32
+   shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
+   `A10Sim.dll`. Host C tests pass. Remaining: execute synthetic two-module
+   and dynamic-lookup tests on a host that can run Linux/i386, validate actual
+   mapped binaries, and implement full Win32 loading / other platform imports.
 3. **Win32/CRT startup shim.** Implement the specific Windows imports the
    game actually calls, including allocation, file paths, registry settings,
    timing, thread-local state, events, window/input messages, and DLL

@@ -3,6 +3,7 @@
 
 /* Host-native tests of the exact resolver built into the Linux/i386 loader. */
 #include "pe32_link.h"
+#include "pe32_win32.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -161,12 +162,80 @@ static void test_reject_bad_images_and_forwarders(void)
     exe.import_size = 40;
 }
 
+static enum pe32_link_status host_resolver(void *context, const char *dll,
+                                          const char *name, pe32_u32 ordinal,
+                                          pe32_u32 *address)
+{
+    (void)context;
+    (void)ordinal;
+    if (strcmp(dll, "KERNEL32.dll") == 0 &&
+        name && strcmp(name, "Sleep") == 0) {
+        *address = 0x12345678;
+        return PE32_LINK_OK;
+    }
+    return PE32_LINK_MISSING;
+}
+
+static void test_explicit_host_resolver(void)
+{
+    pe32_u32 count = 0;
+    reset_fixtures();
+    memcpy(exe_image + 0x300, "KERNEL32.dll", 13);
+    memcpy(exe_image + 0x402, "Sleep", 6);
+    assert(pe32_bind_imports_with_host(&exe, &dll, 1, 0, 0, &count,
+                                       host_resolver, 0) == PE32_LINK_OK);
+    assert(count == 1);
+    assert(get32(exe_image, 0x220) == 0x12345678);
+
+    reset_fixtures();
+    memcpy(exe_image + 0x300, "KERNEL32.dll", 13);
+    memcpy(exe_image + 0x402, "Unknown", 8);
+    assert(pe32_bind_imports_with_host(&exe, &dll, 1, 0, 0, &count,
+                                       host_resolver, 0) == PE32_LINK_MISSING);
+    assert(count == 0);
+    assert(get32(exe_image, 0x220) == 0x400);
+}
+
+static void test_preloaded_win32_module_lookups(void)
+{
+    struct pe32_module modules[] = {exe, dll};
+    pe32_u32 handle;
+    reset_fixtures();
+    pe32_win32_initialize(modules, 2);
+    assert(pe32_win32_get_module_handle_a(0) == 0x00400000);
+    assert(pe32_win32_get_module_handle_a("a10sim.dll") == 0x10000000);
+    assert(pe32_win32_get_module_handle_a("C:\\GAME\\A10SIM.DLL") == 0x10000000);
+    assert(pe32_win32_get_module_handle_a("D:\\GAME\\A10SIM.DLL") == 0);
+    assert(pe32_win32_get_module_handle_a("A10CUBA.EXE") == 0);
+    handle = pe32_win32_load_library_a("A10Sim.DLL");
+    assert(handle == 0x10000000);
+    assert(pe32_win32_load_library_a("missing.dll") == 0);
+    assert(pe32_win32_load_library_a(0) == 0);
+    assert(pe32_win32_get_proc_address(handle, "_SIM_Init@4") == 0x10000600);
+    assert(pe32_win32_get_proc_address(handle, (const char *)(unsigned long)8)
+           == 0x10000700);
+    assert(pe32_win32_get_proc_address(handle, "_sim_Init@4") == 0);
+    assert(pe32_win32_get_proc_address(handle, "missing") == 0);
+    assert(pe32_win32_get_proc_address(handle, 0) == 0);
+    assert(pe32_win32_get_proc_address(0x1234, "_SIM_Init@4") == 0);
+
+    /* Do not return the address of a forwarded export as code. */
+    put32(dll_image, 0x140, 0x1f0);
+    memcpy(dll_image + 0x1f0, "kernel32.Sleep", 15);
+    assert(pe32_win32_get_proc_address(handle, "_SIM_Init@4") == 0);
+    pe32_win32_initialize(0, 0);
+    assert(pe32_win32_get_module_handle_a(0) == 0);
+    assert(pe32_win32_load_library_a("A10Sim.dll") == 0);
+}
+
 int main(void)
 {
     test_named_and_ordinal();
     test_fallback_lookup_and_name();
     test_no_partial_bind_on_missing();
     test_reject_bad_images_and_forwarders();
-    puts("PE32 module linker: named/ordinal/IAT/forwarder/bounds tests passed");
+    test_explicit_host_resolver();
+    test_preloaded_win32_module_lookups();
+    puts("PE32 module linker: imports, dynamic DLL lookup and bounds tests passed");
     return 0;
 }
