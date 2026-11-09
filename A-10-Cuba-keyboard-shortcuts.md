@@ -3,6 +3,8 @@
 Reference for the **original Parsoft/Activision A-10 Cuba! (1996)**, arranged by
 function. This is a description of the original game's controls, **not** a list
 of controls already implemented by the native Linux port.
+Unfamiliar aircraft, HUD, or weapons terminology is explained in the
+[gameplay glossary](GLOSSARY.md).
 
 The principal keyboard chart available online was made for **Macintosh**. Its
 author says that it also works well with the Windows version, but some labels

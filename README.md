@@ -2,6 +2,12 @@
 
 This project is an initial investigation toward a native Linux port. The original game binaries are 32-bit x86 Windows PE files; a native port requires substantial reverse engineering and replacement of Windows APIs. There is no runnable Linux port yet.
 
+## Reference material
+
+- [Original A-10 Cuba! keyboard shortcuts](A-10-Cuba-keyboard-shortcuts.md)
+- [Flight, cockpit, and combat glossary](GLOSSARY.md)
+- [Reverse-engineering and decompilation glossary](docs/GLOSSARY.md)
+
 ## Development environment
 
 Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to test the PE resource reader.
