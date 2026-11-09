@@ -185,6 +185,148 @@ static int normalize_relative_path(const char *source, char *target)
     return length != 0;
 }
 
+/* C:\ is a virtual volume rooted at the executable's directory. It is not
+ * the host's C drive, and neither DOS drives nor UNC shares grant access to
+ * any host paths outside that directory. */
+static const char *sandbox_relative_path(const char *path)
+{
+    if (path && (path[0] == 'C' || path[0] == 'c') && path[1] == ':' &&
+        (path[2] == '/' || path[2] == '\\')) {
+        return path + 3;
+    }
+    return path;
+}
+
+static int path_separator(char ch)
+{
+    return ch == '/' || ch == '\\';
+}
+
+/* Expand Windows paths without accessing the filesystem. The virtual C:\
+ * volume has a fixed current directory at its root; the game's real Linux
+ * parent directory is hidden behind that volume. The limited bootstrap does
+ * not model other drives, drive current directories, UNC or device paths. */
+static int build_virtual_full_path(const char *source, char *output,
+                                   pe32_u32 *file_offset)
+{
+    pe32_u32 used = 3;
+    int last_was_directory = 1;
+    if (!source || !source[0]) {
+        return 0;
+    }
+    if (path_separator(source[0]) && path_separator(source[1])) {
+        return 0; /* UNC/device path: unsupported. */
+    }
+    if (source[1] == ':') {
+        if (source[0] != 'C' && source[0] != 'c') {
+            return 0;
+        }
+        source += 2;
+    }
+    output[0] = 'C';
+    output[1] = ':';
+    output[2] = '\\';
+    output[3] = 0;
+    while (*source) {
+        const char *component;
+        pe32_u32 count = 0, i;
+        if (path_separator(*source)) {
+            last_was_directory = 1;
+            ++source;
+            continue;
+        }
+        component = source;
+        while (*source && !path_separator(*source)) {
+            unsigned char ch = (unsigned char)*source;
+            if (ch < 32 || ch == ':' || ch == '"' || ch == '<' ||
+                ch == '>' || ch == '|' || count >= 255) {
+                return 0;
+            }
+            ++source;
+            ++count;
+        }
+        if (count == 1 && component[0] == '.') {
+            last_was_directory = 1;
+            continue;
+        }
+        if (count == 2 && component[0] == '.' && component[1] == '.') {
+            if (used > 3) {
+                while (used > 3 && output[used - 1] != '\\') {
+                    --used;
+                }
+                if (used > 3) {
+                    --used;
+                }
+                output[used] = 0;
+            }
+            last_was_directory = 1;
+            continue;
+        }
+        if (count > 255 || used + count + 2 > PATH_CAPACITY) {
+            return 0;
+        }
+        if (used > 3) {
+            output[used++] = '\\';
+        }
+        for (i = 0; i < count; ++i) {
+            output[used++] = component[i];
+        }
+        output[used] = 0;
+        last_was_directory = 0;
+    }
+    if (last_was_directory && used > 3) {
+        if (used + 1 >= PATH_CAPACITY) {
+            return 0;
+        }
+        output[used++] = '\\';
+        output[used] = 0;
+    }
+    *file_offset = 0;
+    if (!last_was_directory && used > 3) {
+        pe32_u32 i = used;
+        while (i > 3 && output[i - 1] != '\\') {
+            --i;
+        }
+        *file_offset = i;
+    }
+    return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_get_full_path_name_a(
+    const char *filename, pe32_u32 capacity, char *buffer, char **file_part)
+{
+    char full_path[PATH_CAPACITY];
+    pe32_u32 length = 0, offset = 0, i;
+    if (file_part) {
+        *file_part = 0;
+    }
+    if (!game_root[0]) {
+        pe32_win32_set_last_error(ERROR_PATH_NOT_FOUND);
+        return 0;
+    }
+    if (!build_virtual_full_path(filename, full_path, &offset)) {
+        pe32_win32_set_last_error(ERROR_INVALID_NAME);
+        return 0;
+    }
+    while (full_path[length]) {
+        ++length;
+    }
+    if (capacity <= length) {
+        return length + 1; /* Required capacity includes terminating NUL. */
+    }
+    if (!buffer) {
+        pe32_win32_set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    for (i = 0; i <= length; ++i) {
+        buffer[i] = full_path[i];
+    }
+    if (file_part && offset) {
+        *file_part = buffer + offset;
+    }
+    return length;
+}
+
 static pe32_u32 win32_io_error(int linux_errno)
 {
     switch (linux_errno) {
@@ -574,7 +716,7 @@ pe32_u32 PE32_WINAPI pe32_win32_create_file_a(
         pe32_win32_set_last_error(ERROR_ACCESS_DENIED);
         return PE32_INVALID_HANDLE_VALUE;
     }
-    if (!normalize_relative_path(path, relative)) {
+    if (!normalize_relative_path(sandbox_relative_path(path), relative)) {
         pe32_win32_set_last_error(ERROR_INVALID_NAME);
         return PE32_INVALID_HANDLE_VALUE;
     }
@@ -914,7 +1056,7 @@ pe32_u32 PE32_WINAPI pe32_win32_find_first_file_a(
         pe32_win32_set_last_error(ERROR_INVALID_PARAMETER);
         return PE32_INVALID_HANDLE_VALUE;
     }
-    if (!split_find_path(path, directory, pattern)) {
+    if (!split_find_path(sandbox_relative_path(path), directory, pattern)) {
         pe32_win32_set_last_error(ERROR_INVALID_NAME);
         return PE32_INVALID_HANDLE_VALUE;
     }

@@ -952,6 +952,111 @@ static void test_win32_readonly_game_files(void)
     pe32_io_set_backend(0, 0, 0);
 }
 
+static void test_win32_virtual_full_paths(void)
+{
+    struct pe32_module modules[] = {exe, dll};
+    char path[128], module_path[128], short_buffer[8], *file_part;
+    char too_long[260];
+    const char *expected = "C:\\Media\\Gear.wav";
+    pe32_u32 handle, length = (pe32_u32)strlen(expected);
+    modules[0].path = "/opt/games/A-10Cuba/A10Cuba.exe";
+    fake_game_opens = fake_game_closes = 0;
+    memset(fake_game_files, 0, sizeof(fake_game_files));
+    pe32_io_set_file_backend(fake_game_open, fake_game_close,
+                             fake_game_seek, fake_game_size);
+    pe32_win32_initialize(modules, 2);
+    assert(!strcmp(pe32_win32_get_command_line_a(), "\"C:\\A10Cuba.exe\""));
+    assert(pe32_win32_get_module_file_name_a(0, module_path,
+                                              sizeof(module_path)) ==
+           strlen("C:\\A10Cuba.exe"));
+    assert(!strcmp(module_path, "C:\\A10Cuba.exe"));
+
+    file_part = (char *)1;
+    pe32_win32_set_last_error(0xbeef);
+    assert(pe32_win32_get_full_path_name_a("Media/Gear.wav", sizeof(path),
+                                           path, &file_part) == length);
+    assert(!strcmp(path, expected));
+    assert(file_part == path + strlen("C:\\Media\\"));
+    assert(!strcmp(file_part, "Gear.wav"));
+    assert(pe32_win32_get_last_error() == 0xbeef);
+
+    /* The absolute virtual path round-trips through the read-only sandbox,
+     * but never resolves against a real host C drive. */
+    handle = pe32_win32_create_file_a(path, 0x80000000u, 1, 0, 3, 0, 0);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_close_handle(handle));
+    assert(pe32_win32_create_file_a("C:\\..\\Media\\Gear.wav", 0, 1,
+                                    0, 3, 0, 0) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 123); /* No root traversal. */
+
+    memset(short_buffer, 0x5a, sizeof(short_buffer));
+    file_part = (char *)1;
+    assert(pe32_win32_get_full_path_name_a("Media/Gear.wav", 0,
+                                           0, &file_part) == length + 1);
+    assert(file_part == 0);
+    file_part = (char *)1;
+    assert(pe32_win32_get_full_path_name_a("Media/Gear.wav",
+                                           sizeof(short_buffer), short_buffer,
+                                           &file_part) == length + 1);
+    assert(file_part == 0 && short_buffer[0] == 0x5a);
+    file_part = (char *)1;
+    assert(pe32_win32_get_full_path_name_a("Media/Gear.wav", length + 1,
+                                           path, &file_part) == length);
+    assert(file_part == path + strlen("C:\\Media\\"));
+
+    assert(pe32_win32_get_full_path_name_a("c:/Media/../Media/./Gear.wav",
+                                           sizeof(path), path, &file_part) == length);
+    assert(!strcmp(path, expected));
+    assert(file_part == path + strlen("C:\\Media\\"));
+    assert(pe32_win32_get_full_path_name_a("..\\..\\Gear.wav",
+                                           sizeof(path), path, &file_part) ==
+           strlen("C:\\Gear.wav"));
+    assert(!strcmp(path, "C:\\Gear.wav"));
+    assert(pe32_win32_get_full_path_name_a("Media\\..\\", sizeof(path),
+                                           path, &file_part) == 3);
+    assert(!strcmp(path, "C:\\") && file_part == 0);
+    assert(pe32_win32_get_full_path_name_a("C:\\Media\\", sizeof(path),
+                                           path, &file_part) == strlen("C:\\Media\\"));
+    assert(!strcmp(path, "C:\\Media\\") && file_part == 0);
+    assert(pe32_win32_get_full_path_name_a("C:", sizeof(path),
+                                           path, &file_part) == 3);
+    assert(!strcmp(path, "C:\\") && file_part == 0);
+    assert(pe32_win32_get_full_path_name_a("does-not-exist.ini", sizeof(path),
+                                           path, &file_part) ==
+           strlen("C:\\does-not-exist.ini"));
+    assert(!strcmp(path, "C:\\does-not-exist.ini"));
+    assert(!strcmp(file_part, "does-not-exist.ini"));
+
+    assert(!pe32_win32_get_full_path_name_a("D:\\outside.dat", sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 123);
+    assert(file_part == 0);
+    assert(!pe32_win32_get_full_path_name_a("\\\\server\\share", sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 123);
+    assert(!pe32_win32_get_full_path_name_a("bad:name", sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 123);
+    assert(!pe32_win32_get_full_path_name_a("", sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 123);
+    memset(too_long, 'x', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = 0;
+    assert(!pe32_win32_get_full_path_name_a(too_long, sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 123);
+    assert(!pe32_win32_get_full_path_name_a("Media/Gear.wav", sizeof(path),
+                                            0, &file_part));
+    assert(pe32_win32_get_last_error() == 87);
+
+    pe32_win32_initialize(0, 0);
+    assert(!pe32_win32_get_full_path_name_a("Media/Gear.wav", sizeof(path),
+                                            path, &file_part));
+    assert(pe32_win32_get_last_error() == 3);
+    assert(fake_game_opens == fake_game_closes);
+    pe32_io_set_file_backend(0, 0, 0, 0);
+}
+
 static void test_win32_find_game_files(void)
 {
     struct pe32_module modules[] = {exe, dll};
@@ -976,7 +1081,7 @@ static void test_win32_find_game_files(void)
            == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_find_first_file_a("Media/", &data)
            == PE32_INVALID_HANDLE_VALUE);
-    assert(pe32_win32_find_first_file_a("C:\\*", &data) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_find_first_file_a("D:\\*", &data) == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_find_first_file_a("Media/*.wav", 0)
            == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_get_last_error() == 87);
@@ -1109,6 +1214,16 @@ static void test_win32_casefold_game_paths(void)
     assert(!strcmp(data.filename, "Gear.wav"));
     assert(pe32_win32_find_next_file_a(handle, &data));
     assert(!strcmp(data.filename, "TAUNT2.WAV"));
+    assert(pe32_win32_find_close(handle));
+
+    handle = pe32_win32_find_first_file_a("C:\\mEdIa\\*.wav", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "Gear.wav"));
+    assert(pe32_win32_find_close(handle));
+
+    handle = pe32_win32_find_first_file_a("C:\\*", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "A10Cuba.exe"));
     assert(pe32_win32_find_close(handle));
 
     handle = pe32_win32_find_first_file_a("missions\\D-*.DMO", &data);
@@ -1269,6 +1384,7 @@ int main(void)
     test_win32_single_thread_critical_sections();
     test_win32_standard_io();
     test_win32_readonly_game_files();
+    test_win32_virtual_full_paths();
     test_win32_find_game_files();
     test_win32_casefold_game_paths();
     test_win32_private_heaps();

@@ -104,6 +104,8 @@ pe32_u32 PE32_WINAPI pe32_win32_write_file(pe32_u32 handle, const void *buffer,
                                           pe32_u32 count, pe32_u32 *written_count,
                                           void *overlapped);
 pe32_u32 PE32_WINAPI pe32_win32_close_handle(pe32_u32 handle);
+pe32_u32 PE32_WINAPI pe32_win32_get_full_path_name_a(
+    const char *filename, pe32_u32 capacity, char *buffer, char **file_part);
 pe32_u32 PE32_WINAPI pe32_win32_create_file_a(
     const char *path, pe32_u32 access, pe32_u32 share_mode,
     const void *security, pe32_u32 disposition, pe32_u32 flags,

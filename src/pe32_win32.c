@@ -37,6 +37,39 @@ static pe32_u32 string_length(const char *str)
     return length;
 }
 
+/* The loader opens real Linux files, but the guest sees a small virtual C:\
+ * rooted at the executable's directory. Keep Win32 paths supplied by host
+ * tests unchanged; translate Linux module paths to C:\<basename> so the
+ * process command line agrees with GetFullPathNameA and CreateFileA. */
+static const char *guest_module_path(const char *path, char *buffer,
+                                     pe32_u32 capacity)
+{
+    const char *basename = path;
+    pe32_u32 i, length;
+    if (!path) {
+        return 0;
+    }
+    if (path[0] && path[1] == ':') {
+        return path;
+    }
+    for (i = 0; path[i]; ++i) {
+        if (path[i] == '/') {
+            basename = path + i + 1;
+        }
+    }
+    length = string_length(basename);
+    if (length + 4 > capacity) {
+        return 0;
+    }
+    buffer[0] = 'C';
+    buffer[1] = ':';
+    buffer[2] = '\\';
+    for (i = 0; i <= length; ++i) {
+        buffer[i + 3] = basename[i];
+    }
+    return buffer;
+}
+
 #if defined(__i386__)
 static int equal_ascii_ci(const char *a, const char *b)
 {
@@ -76,6 +109,7 @@ void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
 {
     pe32_u32 i;
     const char *path;
+    char guest_path[PE32_COMMAND_LINE_CAPACITY];
     pe32_u32 length = 0;
     pe32_heap_reset();
     pe32_io_reset();
@@ -88,7 +122,9 @@ void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
         tls_values[i] = 0;
     }
     command_line[0] = 0;
-    path = registered_count ? registered_modules[0].path : (const char *)0;
+    path = registered_count ?
+        guest_module_path(registered_modules[0].path, guest_path,
+                          sizeof(guest_path)) : (const char *)0;
     if (path) {
         /* A single quoted program argument, never the loader's own options.
          * Windows forbids double quotes in filenames; Linux paths with a
@@ -113,6 +149,7 @@ pe32_u32 PE32_WINAPI pe32_win32_get_module_file_name_a(pe32_u32 handle,
 {
     const struct pe32_module *module;
     const char *path;
+    char guest_path[PE32_COMMAND_LINE_CAPACITY];
     pe32_u32 length, i, copied;
     if (!registered_count) {
         current_last_error = PE32_ERROR_MOD_NOT_FOUND;
@@ -125,7 +162,11 @@ pe32_u32 PE32_WINAPI pe32_win32_get_module_file_name_a(pe32_u32 handle,
         current_last_error = PE32_ERROR_MOD_NOT_FOUND;
         return 0;
     }
-    path = module->path;
+    path = guest_module_path(module->path, guest_path, sizeof(guest_path));
+    if (!path) {
+        current_last_error = PE32_ERROR_INSUFFICIENT_BUFFER;
+        return 0;
+    }
     if (!buffer || !capacity) {
         current_last_error = PE32_ERROR_INSUFFICIENT_BUFFER;
         return 0;
@@ -456,6 +497,7 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("ReadFile", pe32_win32_read_file)
     EXPOSE_KERNEL32("WriteFile", pe32_win32_write_file)
     EXPOSE_KERNEL32("CloseHandle", pe32_win32_close_handle)
+    EXPOSE_KERNEL32("GetFullPathNameA", pe32_win32_get_full_path_name_a)
     EXPOSE_KERNEL32("CreateFileA", pe32_win32_create_file_a)
     EXPOSE_KERNEL32("GetFileSize", pe32_win32_get_file_size)
     EXPOSE_KERNEL32("SetFilePointer", pe32_win32_set_file_pointer)

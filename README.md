@@ -28,8 +28,8 @@ threading, or structured-exception semantics.
 Early process/CRT imports (`GetCommandLineA`, `GetStartupInfoA`,
 `GetModuleFileNameA`, environment-string access and process/thread pseudo-
 handles) also have a **single-thread bootstrap implementation**. It uses an
-empty guest environment and the paths passed to the loader, not a real
-Windows process environment or filesystem.
+empty guest environment, not a real Windows process environment. Linux module
+paths are presented to the game as `C:\<filename>`.
 Six additional original EXE imports implement native byte-string copy/append/
 length and atomic 32-bit increment/decrement; locale-aware string comparisons
 and Windows exception handling remain unimplemented.
@@ -40,11 +40,12 @@ Seven standard-handle functions provide a Linux syscall-backed bridge for
 inherited stdin/stdout/stderr and synchronous reads/writes, including Win32
 file-type classification and last-error handling. `CreateFileA`, `GetFileSize`
 and `SetFilePointer` additionally support ordinary **read-only game data**
-under the EXE's directory. This early implementation accepts relative paths
-only, resolves ASCII filename case across path components when an exact Linux
-open fails, rejects symlinks and `..` path components, and does not support
-file creation, writes, sharing semantics,
-overlapped I/O or a Win32 console. `GetFileTime` and
+under the EXE's directory. `GetFullPathNameA` supplies a lexical virtual
+`C:\` directory rooted at that game-data directory, with buffer sizing and
+file-part pointers. File APIs accept both relative paths and those virtual
+`C:\` paths, resolve ASCII filename case when an exact Linux open fails, and
+reject symlinks and `..` path components. File creation, writes, sharing
+semantics, overlapped I/O and a Win32 console remain unsupported. `GetFileTime` and
 `GetFileInformationByHandle` report native file metadata in Win32 structures;
 creation time is approximated by the last modification time and the virtual
 volume serial number is currently zero. `FindFirstFileA`, `FindNextFileA` and
@@ -53,7 +54,8 @@ ASCII `*`/`?` filename matching, including Win32's extensionless `*.*` rule.
 Search directories also resolve ASCII filename case. When a directory contains
 two names that differ only by case, an exact spelling wins; an ambiguous
 non-exact lookup fails. Symlinks, non-ASCII case folding, 8.3 aliases and
-extended DOS wildcard semantics are not emulated.
+extended DOS wildcard semantics are not emulated. Other Windows drives,
+UNC paths and process-wide current-directory changes are unsupported.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)
