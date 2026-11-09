@@ -7,10 +7,36 @@ This project is an initial investigation toward a native Linux port. The origina
 - [Original A-10 Cuba! keyboard shortcuts](A-10-Cuba-keyboard-shortcuts.md)
 - [Flight, cockpit, and combat glossary](GLOSSARY.md)
 - [Reverse-engineering and decompilation glossary](docs/GLOSSARY.md)
+- [Native x86 execution and SDL3 replacement plan](docs/native-runtime-plan.md)
 
 ## Development environment
 
 Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to test the PE resource reader.
+
+## Native PE32 execution bootstrap
+
+This is the beginning of a **direct native x86** execution path, distinct from
+the existing Wine reference run and SDL3 bitmap viewer. The freestanding
+Linux/i386 runner can map a PE32 image and apply its base relocations without
+a 32-bit C library. It **does not yet resolve Windows imports or execute the
+game**. See the [native runtime plan](docs/native-runtime-plan.md) for the
+exact scope and remaining work.
+
+```sh
+./scripts/build-native-pe32.sh
+python3 -m unittest discover -s tests -v
+
+# Requires your own locally extracted original disc files:
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Cuba.exe
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --json
+./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe
+```
+
+The last command is **inspection only**. `--run-entry` is an experimental
+option intended for the synthetic import-free PE fixture, **not** the game.
+Executing original 32-bit code requires Linux i386 ELF support; `qemu-i386`
+can run its tests if the local kernel does not support that mode. The import
+scanner is host-Python and needs neither 32-bit support nor Wine.
 
 ## Run the original game in Wine
 
