@@ -41,16 +41,19 @@ inherited stdin/stdout/stderr and synchronous reads/writes, including Win32
 file-type classification and last-error handling. `CreateFileA`, `GetFileSize`
 and `SetFilePointer` additionally support ordinary **read-only game data**
 under the EXE's directory. This early implementation accepts relative paths
-only, requires exact filename case on Linux, rejects symlinks and `..` path
-components, and does not support file creation, writes, sharing semantics,
+only, resolves ASCII filename case across path components when an exact Linux
+open fails, rejects symlinks and `..` path components, and does not support
+file creation, writes, sharing semantics,
 overlapped I/O or a Win32 console. `GetFileTime` and
 `GetFileInformationByHandle` report native file metadata in Win32 structures;
 creation time is approximated by the last modification time and the virtual
 volume serial number is currently zero. `FindFirstFileA`, `FindNextFileA` and
 `FindClose` enumerate regular files and directories with case-insensitive
 ASCII `*`/`?` filename matching, including Win32's extensionless `*.*` rule.
-The search directory still requires exact Linux filename case; symlinks,
-8.3 aliases and extended DOS wildcard semantics are not emulated.
+Search directories also resolve ASCII filename case. When a directory contains
+two names that differ only by case, an exact spelling wins; an ambiguous
+non-exact lookup fails. Symlinks, non-ASCII case folding, 8.3 aliases and
+extended DOS wildcard semantics are not emulated.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

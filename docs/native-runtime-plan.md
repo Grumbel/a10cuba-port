@@ -98,7 +98,11 @@ The repository now has:
   absolute/drive paths, parent-directory traversal and unsupported flags are
   rejected. The Linux i386 backend uses `openat` with `O_NOFOLLOW` on **each**
   path component, so symlinks under the game root cannot escape it; this
-  bootstrap currently requires **exact case** for each asset filename.
+  bootstrap first attempts the exact Linux path, then resolves each component
+  through read-only directory enumeration on `ENOENT`/`ENOTDIR`, with ASCII
+  case-insensitive matching. Exact spelling takes priority; if two entries
+  differ only by case and neither is exact, the lookup fails as ambiguous.
+  This is not locale-aware Unicode or Windows filesystem normalization.
   File sizes and positions use Linux `fstat64`/`_llseek` for 64-bit offsets.
   File metadata uses the fixed 52-byte PE32 `BY_HANDLE_FILE_INFORMATION`
   layout, original inode numbers, link counts, permission-derived read-only
@@ -112,9 +116,9 @@ The repository now has:
   case-insensitive filename matching (`*`, `?`, and special `*.*` for all
   names), and file/directory attributes with timestamps. Each entry is
   inspected via no-follow `openat`/`fstat64`; symlinks are skipped. Searching
-  within a directory still requires its **exact Linux name case**, and DOS
-  wildcard subtleties, 8.3 aliases and directory listings via Windows drives
-  are not implemented. At most 32 independent find handles are available;
+  within a directory also supports ASCII case-insensitive path components,
+  but DOS wildcard subtleties, 8.3 aliases and directory listings via Windows
+  drives are not implemented. At most 32 independent find handles are available;
   `FindClose` and shim reinitialization release them.
   Inherited streams use `read`, `write` and `fstat64`; all host tests inject
   fake I/O. `GetFileType` recognizes redirected regular files, terminals and
@@ -123,8 +127,8 @@ The repository now has:
   a synthetic standard handle invalidates it **without** closing the loader's
   diagnostic descriptors; closing a file handle closes its private Linux fd,
   and reinitializing the shim closes any leaked file handles. This layer does
-  **not** implement Win32 sharing/locking, writable files or saves, case-
-  insensitive paths, overlapped I/O, console screens, or handle duplication.
+  **not** implement Win32 sharing/locking, writable files or saves, full
+  Windows path semantics, overlapped I/O, console screens, or handle duplication.
   The original PE's subsystem is Windows GUI, so real Windows standard handles
   could instead be NULL; providing inherited fds is an explicit bootstrap
   configuration, not an exact process-creation emulation.

@@ -488,11 +488,17 @@ static const struct {
     {1, "README", 0100644},
     {1, "Notes.txt", 0100644},
     {1, "SubFolder", 0040755},
+    {3, "Nested.TXT", 0100644},
+    {3, "Readme.txt", 0100644},
+    {3, "README.TXT", 0100644},
     {2, "D-DropZone04.dmo", 0100644},
     {2, "B-DropZone04.dmo", 0100644},
     {0, "A10Cuba.exe", 0100644},
     {0, "Media", 0040755},
     {0, "Missions", 0040755},
+    {0, "Mods", 0040755},
+    {0, "MODS", 0040755},
+    {0, "Shortcut", 0120777},
 };
 
 static int fake_open_directory(const char *root, const char *relative)
@@ -502,8 +508,12 @@ static int fake_open_directory(const char *root, const char *relative)
     assert(!strcmp(root, "/opt/games/A-10Cuba/"));
     if (!strcmp(relative, "Media")) {
         kind = 1;
+    } else if (!strcmp(relative, "Media/SubFolder")) {
+        kind = 3;
     } else if (!strcmp(relative, "Missions")) {
         kind = 2;
+    } else if (!strcmp(relative, "Mods") || !strcmp(relative, "MODS")) {
+        kind = 4;
     } else if (!strcmp(relative, ".")) {
         kind = 0;
     } else {
@@ -554,7 +564,10 @@ static int fake_game_open(const char *root, const char *relative)
     if (!strcmp(relative, "locked.dat")) {
         return -13;
     }
-    if (strcmp(relative, "Media/Gear.wav") && strcmp(relative, "Big.dat")) {
+    if (strcmp(relative, "Media/Gear.wav") && strcmp(relative, "Big.dat") &&
+        strcmp(relative, "Media/SubFolder/Nested.TXT") &&
+        strcmp(relative, "Media/SubFolder/Readme.txt") &&
+        strcmp(relative, "Media/SubFolder/README.TXT")) {
         return -2;
     }
     assert(index < sizeof(fake_game_files) / sizeof(fake_game_files[0]));
@@ -1021,7 +1034,7 @@ static void test_win32_find_game_files(void)
     assert(pe32_win32_get_last_error() == 2); /* ERROR_FILE_NOT_FOUND */
     assert(pe32_win32_find_first_file_a("Unlisted/*", &data)
            == PE32_INVALID_HANDLE_VALUE);
-    assert(pe32_win32_get_last_error() == 2);
+    assert(pe32_win32_get_last_error() == 3); /* Missing directory component. */
 
     for (i = 0; i < 32; ++i) {
         handles[i] = pe32_win32_find_first_file_a("Media/*.wav", &data);
@@ -1036,6 +1049,95 @@ static void test_win32_find_game_files(void)
     assert(pe32_win32_get_last_error() == 6);
     pe32_io_set_directory_backend(0, 0);
     pe32_io_set_file_backend(0, 0, 0, 0);
+}
+
+static void test_win32_casefold_game_paths(void)
+{
+    struct pe32_module modules[] = {exe, dll};
+    struct pe32_find_data_a data;
+    pe32_u32 handle, count;
+    char bytes[sizeof(game_file_data)] = {0};
+    unsigned matches;
+    modules[0].path = "/opt/games/A-10Cuba/A10Cuba.exe";
+    fake_game_opens = fake_game_closes = 0;
+    fake_dir_opens = fake_dir_closes = 0;
+    memset(fake_game_files, 0, sizeof(fake_game_files));
+    memset(fake_directories, 0, sizeof(fake_directories));
+    pe32_io_set_backend(fake_standard_read, fake_standard_write,
+                        fake_standard_type);
+    pe32_io_set_file_backend(fake_game_open, fake_game_close,
+                             fake_game_seek, fake_game_size);
+    pe32_io_set_directory_backend(fake_open_directory, fake_next_directory);
+    pe32_win32_initialize(modules, 2);
+
+    /* A wrong-case parent and filename must both resolve to actual on-disc
+     * spellings. A second nested directory exercises multiple components. */
+    handle = pe32_win32_create_file_a("mEdIa\\gEaR.WaV", 0x80000000u, 1,
+                                      0, 3, 0, 0);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_read_file(handle, bytes, sizeof(bytes), &count, 0));
+    assert(count == sizeof(game_file_data) - 1);
+    assert(!memcmp(bytes, game_file_data, count));
+    assert(pe32_win32_close_handle(handle));
+
+    handle = pe32_win32_create_file_a("MEDIA\\subfolder\\nested.txt",
+                                      0x80000000u, 1, 0, 3, 0, 0);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_close_handle(handle));
+
+    /* Exact spelling wins even on a Linux directory with names that differ
+     * only by case. Non-exact ambiguous matches are rejected. */
+    handle = pe32_win32_create_file_a("MEDIA\\SUBFOLDER\\Readme.txt",
+                                      0, 1, 0, 3, 0, 0);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_close_handle(handle));
+    assert(pe32_win32_create_file_a("Media\\SubFolder\\rEaDmE.TxT",
+                                      0, 1, 0, 3, 0, 0) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 123); /* Ambiguous case-fold. */
+    assert(pe32_win32_create_file_a("mEdIa\\missing.WAV", 0, 1, 0, 3,
+                                    0, 0) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 2); /* Missing leaf file. */
+    assert(pe32_win32_create_file_a("missing\\Gear.wav", 0, 1, 0, 3,
+                                    0, 0) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 3); /* Missing directory. */
+    assert(pe32_win32_create_file_a("shortcut\\Nested.TXT", 0, 1, 0, 3,
+                                    0, 0) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 3); /* No symlink traversal. */
+
+    handle = pe32_win32_find_first_file_a("mEdIa\\*.WaV", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "Gear.wav"));
+    assert(pe32_win32_find_next_file_a(handle, &data));
+    assert(!strcmp(data.filename, "TAUNT2.WAV"));
+    assert(pe32_win32_find_close(handle));
+
+    handle = pe32_win32_find_first_file_a("missions\\D-*.DMO", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    assert(!strcmp(data.filename, "D-DropZone04.dmo"));
+    assert(pe32_win32_find_close(handle));
+
+    handle = pe32_win32_find_first_file_a("media\\SUBFOLDER\\*.txt", &data);
+    assert(handle != PE32_INVALID_HANDLE_VALUE);
+    matches = 0;
+    do {
+        ++matches;
+    } while (pe32_win32_find_next_file_a(handle, &data));
+    assert(matches == 3);
+    assert(pe32_win32_find_close(handle));
+
+    assert(pe32_win32_find_first_file_a("mods\\*", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 123); /* Mods and MODS clash. */
+    assert(pe32_win32_find_first_file_a("Mods\\*", &data)
+           == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 2); /* Exact directory, no files. */
+
+    pe32_win32_initialize(0, 0);
+    assert(fake_game_opens == fake_game_closes);
+    assert(fake_dir_opens == fake_dir_closes);
+    pe32_io_set_directory_backend(0, 0);
+    pe32_io_set_file_backend(0, 0, 0, 0);
+    pe32_io_set_backend(0, 0, 0);
 }
 
 static void test_win32_private_heaps(void)
@@ -1168,6 +1270,7 @@ int main(void)
     test_win32_standard_io();
     test_win32_readonly_game_files();
     test_win32_find_game_files();
+    test_win32_casefold_game_paths();
     test_win32_private_heaps();
     puts("PE32 linker: imports, DLL lookup, startup, strings, synchronization, I/O, TLS, heaps and bounds tests passed");
     return 0;

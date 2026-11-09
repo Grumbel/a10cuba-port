@@ -205,6 +205,130 @@ static pe32_u32 win32_io_error(int linux_errno)
     }
 }
 
+static unsigned char fold_ascii(unsigned char ch)
+{
+    return ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch;
+}
+
+static int equal_ascii_ci(const char *left, const char *right)
+{
+    while (*left && *right) {
+        if (fold_ascii((unsigned char)*left++) !=
+            fold_ascii((unsigned char)*right++)) {
+            return 0;
+        }
+    }
+    return *left == *right;
+}
+
+static int equal_ascii(const char *left, const char *right)
+{
+    while (*left && *right && *left == *right) {
+        ++left;
+        ++right;
+    }
+    return *left == *right;
+}
+
+/* Case-insensitive path lookup is a fallback for Linux ENOENT/ENOTDIR. Walk
+ * one component at a time using the same no-follow directory backend as
+ * FindFirstFileA. An ambiguous case-fold match is rejected unless one entry
+ * matches the requested spelling exactly. No user-supplied path can escape
+ * the executable's directory; callers normalize and reject '..' first. */
+static pe32_u32 resolve_casefold_relative(const char *relative,
+                                          char *resolved, int final_directory)
+{
+    const char *cursor = relative;
+    pe32_u32 used = 0;
+    if (!backend_open_dir || !backend_next_dir || !backend_close) {
+        return ERROR_PATH_NOT_FOUND;
+    }
+    if (final_directory && relative[0] == '.' && !relative[1]) {
+        resolved[0] = '.';
+        resolved[1] = 0;
+        return ERROR_SUCCESS;
+    }
+    resolved[0] = 0;
+    while (*cursor) {
+        char component[256], chosen[260], name[260];
+        pe32_u32 count = 0, matches = 0, i;
+        struct pe32_io_stat stat;
+        int exact = 0, fd, result, want_dir;
+        pe32_u32 error = ERROR_SUCCESS;
+        while (*cursor && *cursor != '/') {
+            if (count >= sizeof(component) - 1) {
+                return ERROR_INVALID_NAME;
+            }
+            component[count++] = *cursor++;
+        }
+        component[count] = 0;
+        want_dir = *cursor == '/' || final_directory;
+        fd = backend_open_dir(game_root, used ? resolved : ".");
+        if (fd < 0) {
+            return win32_io_error(-fd);
+        }
+        for (;;) {
+            result = backend_next_dir((pe32_u32)fd, name, sizeof(name), &stat);
+            if (result < 0) {
+                error = win32_io_error(-result);
+                break;
+            }
+            if (!result) {
+                break;
+            }
+            if (!equal_ascii_ci(name, component) ||
+                (stat.mode & 0170000u) != (want_dir ? 0040000u : 0100000u)) {
+                continue;
+            }
+            if (equal_ascii(name, component)) {
+                for (i = 0; i < sizeof(chosen) - 1 && name[i]; ++i) {
+                    chosen[i] = name[i];
+                }
+                chosen[i] = 0;
+                exact = 1;
+                break;
+            }
+            if (!matches) {
+                for (i = 0; i < sizeof(chosen) - 1 && name[i]; ++i) {
+                    chosen[i] = name[i];
+                }
+                chosen[i] = 0;
+            }
+            ++matches;
+        }
+        result = backend_close((pe32_u32)fd);
+        if (result < 0 && error == ERROR_SUCCESS) {
+            error = win32_io_error(-result);
+        }
+        if (error != ERROR_SUCCESS) {
+            return error;
+        }
+        if (!exact && matches > 1) {
+            return ERROR_INVALID_NAME;
+        }
+        if (!exact && !matches) {
+            return want_dir ? ERROR_PATH_NOT_FOUND : ERROR_FILE_NOT_FOUND;
+        }
+        if (used) {
+            if (used + 1 >= PATH_CAPACITY) {
+                return ERROR_INVALID_NAME;
+            }
+            resolved[used++] = '/';
+        }
+        for (i = 0; chosen[i]; ++i) {
+            if (used + 1 >= PATH_CAPACITY) {
+                return ERROR_INVALID_NAME;
+            }
+            resolved[used++] = chosen[i];
+        }
+        resolved[used] = 0;
+        if (*cursor == '/') {
+            ++cursor;
+        }
+    }
+    return ERROR_SUCCESS;
+}
+
 void pe32_io_set_backend(pe32_io_read_fn read_fn, pe32_io_write_fn write_fn,
                          pe32_io_type_fn type_fn)
 {
@@ -439,6 +563,7 @@ pe32_u32 PE32_WINAPI pe32_win32_create_file_a(
     pe32_u32 template_handle)
 {
     char relative[PATH_CAPACITY];
+    char resolved[PATH_CAPACITY];
     pe32_u32 slot;
     int fd;
     /* Read-only OPEN_EXISTING on ordinary files, with no asynchronous or
@@ -467,6 +592,15 @@ pe32_u32 PE32_WINAPI pe32_win32_create_file_a(
         return PE32_INVALID_HANDLE_VALUE;
     }
     fd = backend_open_read(game_root, relative);
+    if ((fd == -LINUX_ENOENT || fd == -LINUX_ENOTDIR) &&
+        backend_open_dir && backend_next_dir) {
+        pe32_u32 error = resolve_casefold_relative(relative, resolved, 0);
+        if (error != ERROR_SUCCESS) {
+            pe32_win32_set_last_error(error);
+            return PE32_INVALID_HANDLE_VALUE;
+        }
+        fd = backend_open_read(game_root, resolved);
+    }
     if (fd < 0) {
         pe32_win32_set_last_error(win32_io_error(-fd));
         return PE32_INVALID_HANDLE_VALUE;
@@ -648,11 +782,6 @@ pe32_u32 PE32_WINAPI pe32_win32_get_file_information_by_handle(
 /* Win32 filename search uses case-insensitive matching. Only * and ? are
  * implemented; DOS wildcard subtleties and short 8.3 aliases are not yet
  * emulated. Win32's *.* accepts extensionless entries too. */
-static unsigned char fold_ascii(unsigned char ch)
-{
-    return ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch;
-}
-
 static int wildcard_matches(const char *pattern, const char *name)
 {
     const char *star = 0, *retry = 0;
@@ -778,6 +907,7 @@ pe32_u32 PE32_WINAPI pe32_win32_find_first_file_a(
     const char *path, struct pe32_find_data_a *data)
 {
     char directory[PATH_CAPACITY], pattern[260];
+    char resolved[PATH_CAPACITY];
     pe32_u32 slot;
     int fd;
     if (!data) {
@@ -803,6 +933,14 @@ pe32_u32 PE32_WINAPI pe32_win32_find_first_file_a(
         return PE32_INVALID_HANDLE_VALUE;
     }
     fd = backend_open_dir(game_root, directory);
+    if (fd == -LINUX_ENOENT || fd == -LINUX_ENOTDIR) {
+        pe32_u32 error = resolve_casefold_relative(directory, resolved, 1);
+        if (error != ERROR_SUCCESS) {
+            pe32_win32_set_last_error(error);
+            return PE32_INVALID_HANDLE_VALUE;
+        }
+        fd = backend_open_dir(game_root, resolved);
+    }
     if (fd < 0) {
         pe32_win32_set_last_error(win32_io_error(-fd));
         return PE32_INVALID_HANDLE_VALUE;
