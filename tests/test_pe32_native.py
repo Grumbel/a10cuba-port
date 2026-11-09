@@ -202,6 +202,77 @@ def heap_fixture():
     return bytes(data)
 
 
+def startup_fixture():
+    """Synthetic x86 calls through the CRT startup import subset."""
+    base = 0x00400000
+    data = bytearray(fixture(image_base=base))
+    opt = 0x98
+    struct.pack_into('<II', data, opt + 104, 0x2020, 40)
+    struct.pack_into('<IIIII', data, 0x420, 0x2080, 0, 0, 0x20a0, 0x2080)
+    names = ['GetCommandLineA', 'GetCurrentThreadId',
+             'GetModuleFileNameA', 'GetStartupInfoA']
+    for index, name in enumerate(names):
+        name_rva = 0x20c0 + index * 0x20
+        struct.pack_into('<I', data, 0x480 + index * 4, name_rva)
+        struct.pack_into('<H', data, 0x400 + name_rva - 0x2000, 0)
+        encoded = name.encode('ascii') + b'\0'
+        at = 0x402 + name_rva - 0x2000
+        data[at:at + len(encoded)] = encoded
+    data[0x4a0:0x4ad] = b'KERNEL32.dll\0'
+
+    code = bytearray()
+    fixups = []
+    failure_branches = []
+
+    def absolute_push(address):
+        code.append(0x68)
+        fixups.append(0x1000 + len(code))
+        code.extend(struct.pack('<I', base + address))
+
+    def call_import(index):
+        code.extend(b'\xff\x15')
+        fixups.append(0x1000 + len(code))
+        code.extend(struct.pack('<I', base + 0x2080 + 4 * index))
+
+    def branch_on_failure(opcode):
+        code.extend(bytes([opcode, 0]))
+        failure_branches.append(len(code) - 1)
+
+    call_import(0)                       # GetCommandLineA -> first byte '"'
+    code.extend(b'\x80\x38\x22')
+    branch_on_failure(0x75)              # jne
+    call_import(1)                       # GetCurrentThreadId -> 1
+    code.extend(b'\x83\xf8\x01')
+    branch_on_failure(0x75)
+    code.extend(b'\x6a\x50')           # 80-byte filename buffer
+    absolute_push(0x21b0)
+    code.extend(b'\x6a\x00')           # main module handle
+    call_import(2)                       # GetModuleFileNameA
+    code.extend(b'\x85\xc0')
+    branch_on_failure(0x74)              # je
+    absolute_push(0x2160)
+    call_import(3)                       # GetStartupInfoA
+    code.append(0xa1)                    # mov eax, [startup_info.cb]
+    fixups.append(0x1000 + len(code))
+    code.extend(struct.pack('<I', base + 0x2160))
+    code.extend(b'\x83\xf8\x44')       # cb == 68
+    branch_on_failure(0x75)
+    code.extend(b'\xb8\x2a\x00\x00\x00\xc3')
+    failure = len(code)
+    code.extend(b'\x31\xc0\xc3')
+    for displacement in failure_branches:
+        distance = failure - (displacement + 1)
+        assert 0 <= distance < 128
+        code[displacement] = distance
+    data[0x200:0x200 + len(code)] = code
+    entries = [0x3000 | (rva - 0x1000) for rva in fixups]
+    length = 8 + 2 * len(entries)
+    struct.pack_into('<II', data, opt + 136, 0x3000, length)
+    struct.pack_into('<II' + 'H' * len(entries), data, 0x600,
+                     0x1000, length, *entries)
+    return bytes(data)
+
+
 class ImportTests(unittest.TestCase):
     def test_no_imports(self):
         self.assertEqual(pe32_imports.PEImports(fixture()).imports(), [])
@@ -288,6 +359,12 @@ class ImportTests(unittest.TestCase):
                          ['HeapCreate', 'HeapAlloc', 'HeapSize', 'HeapFree',
                           'HeapDestroy'])
 
+    def test_startup_fixture_imports(self):
+        symbols = pe32_imports.PEImports(startup_fixture()).imports()[0]['symbols']
+        self.assertEqual([s['name'] for s in symbols],
+                         ['GetCommandLineA', 'GetCurrentThreadId',
+                          'GetModuleFileNameA', 'GetStartupInfoA'])
+
     @unittest.skipUnless(shutil.which('objdump'), 'binutils objdump unavailable')
     def test_fixture_is_recognized_by_binutils(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -337,6 +414,10 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_heap_realloc', 16),
             ('pe32_win32_heap_free', 12),
             ('pe32_win32_heap_size', 12),
+            ('pe32_win32_get_module_file_name_a', 12),
+            ('pe32_win32_get_startup_info_a', 4),
+            ('pe32_win32_free_environment_strings_a', 4),
+            ('pe32_win32_free_environment_strings_w', 4),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -426,6 +507,15 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn('linked KERNEL32.dll!HeapDestroy', result.stdout)
         self.assertIn('Entry returned 42', result.stdout)
 
+    def test_startup_imported_function_calls(self):
+        result = self.invoke(startup_fixture(), '--run-entry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('linked KERNEL32.dll!GetCommandLineA', result.stdout)
+        self.assertIn('linked KERNEL32.dll!GetCurrentThreadId', result.stdout)
+        self.assertIn('linked KERNEL32.dll!GetModuleFileNameA', result.stdout)
+        self.assertIn('linked KERNEL32.dll!GetStartupInfoA', result.stdout)
+        self.assertIn('Entry returned 42', result.stdout)
+
 
 class HostLinkerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
@@ -474,8 +564,13 @@ class OriginalDiscTests(unittest.TestCase):
         implemented = {'LoadLibraryA', 'GetProcAddress', 'GetModuleHandleA',
                        'TlsAlloc', 'TlsFree', 'TlsGetValue', 'TlsSetValue',
                        'SetLastError', 'GetLastError', 'HeapCreate', 'HeapDestroy',
-                       'HeapAlloc', 'HeapReAlloc', 'HeapFree', 'HeapSize'}
-        for imports, count in ((exe_imports, 13), (dll_imports, 15)):
+                       'HeapAlloc', 'HeapReAlloc', 'HeapFree', 'HeapSize',
+                       'GetCommandLineA', 'GetModuleFileNameA', 'GetStartupInfoA',
+                       'GetEnvironmentStrings', 'GetEnvironmentStringsW',
+                       'FreeEnvironmentStringsA', 'FreeEnvironmentStringsW',
+                       'GetCurrentProcess', 'GetCurrentThread',
+                       'GetCurrentThreadId'}
+        for imports, count in ((exe_imports, 23), (dll_imports, 24)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {

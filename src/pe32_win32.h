@@ -23,6 +23,24 @@ pe32_u32 PE32_WINAPI pe32_win32_get_module_handle_a(const char *name);
 pe32_u32 PE32_WINAPI pe32_win32_get_proc_address(pe32_u32 handle,
                                                   const char *name_or_ordinal);
 
+/* Single-process startup records for early CRT calls. Paths are the supplied
+ * PE module paths (not yet translated to a virtual Windows drive). The guest
+ * sees an empty, read-only environment; the Linux host environment is never
+ * leaked through these functions. STARTUPINFOA occupies 68 bytes on PE32. */
+#define PE32_STARTUPINFOA_SIZE 68u
+char *PE32_WINAPI pe32_win32_get_command_line_a(void);
+pe32_u32 PE32_WINAPI pe32_win32_get_module_file_name_a(pe32_u32 module,
+                                                      char *buffer,
+                                                      pe32_u32 capacity);
+void PE32_WINAPI pe32_win32_get_startup_info_a(void *startup_info);
+char *PE32_WINAPI pe32_win32_get_environment_strings(void);
+pe32_u16 *PE32_WINAPI pe32_win32_get_environment_strings_w(void);
+pe32_u32 PE32_WINAPI pe32_win32_free_environment_strings_a(char *environment);
+pe32_u32 PE32_WINAPI pe32_win32_free_environment_strings_w(pe32_u16 *environment);
+pe32_u32 PE32_WINAPI pe32_win32_get_current_process(void);
+pe32_u32 PE32_WINAPI pe32_win32_get_current_thread(void);
+pe32_u32 PE32_WINAPI pe32_win32_get_current_thread_id(void);
+
 /* Single-thread subset of Win32 last error and dynamically allocated TLS.
  * TLS values are 32-bit guest pointers/integers. These must NOT be used with
  * multiple Linux threads until a real per-thread implementation exists. */

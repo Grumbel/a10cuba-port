@@ -25,6 +25,11 @@ without a 32-bit C library. Minimal `LoadLibraryA`/`GetProcAddress`/
 bootstrap experiments. The heap adapter implements six functions used by both
 original game modules, but **does not** reproduce Windows heap reservation,
 threading, or structured-exception semantics.
+Early process/CRT imports (`GetCommandLineA`, `GetStartupInfoA`,
+`GetModuleFileNameA`, environment-string access and process/thread pseudo-
+handles) also have a **single-thread bootstrap implementation**. It uses an
+empty guest environment and the paths passed to the loader, not a real
+Windows process environment or filesystem.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

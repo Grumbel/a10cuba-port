@@ -298,6 +298,70 @@ static void test_win32_tls_and_last_error(void)
     assert(pe32_win32_get_last_error() == 0);
 }
 
+static void test_win32_process_startup_subset(void)
+{
+    struct pe32_module modules[] = {exe, dll};
+    char path[64];
+    unsigned char startup[PE32_STARTUPINFOA_SIZE + 4];
+    const char *line;
+    char *environment;
+    pe32_u16 *wide_environment;
+    unsigned i;
+
+    modules[0].path = "C:\\Program Files\\A10 Cuba\\A10Cuba.exe";
+    pe32_win32_initialize(modules, 2);
+    line = pe32_win32_get_command_line_a();
+    assert(strcmp(line, "\"C:\\Program Files\\A10 Cuba\\A10Cuba.exe\"") == 0);
+    assert(pe32_win32_get_current_process() == 0xffffffffu);
+    assert(pe32_win32_get_current_thread() == 0xfffffffeu);
+    assert(pe32_win32_get_current_thread_id() == 1);
+
+    pe32_win32_set_last_error(0x1234);
+    memset(path, 0xee, sizeof(path));
+    assert(pe32_win32_get_module_file_name_a(0, path, sizeof(path)) ==
+           strlen(modules[0].path));
+    assert(strcmp(path, modules[0].path) == 0);
+    assert(pe32_win32_get_last_error() == 0x1234);
+    assert(pe32_win32_get_module_file_name_a(dll.base, path, sizeof(path)) ==
+           strlen(dll.path));
+    assert(strcmp(path, dll.path) == 0);
+    assert(pe32_win32_get_module_file_name_a(dll.base, path, 4) == 4);
+    assert(memcmp(path, "C:\\", 3) == 0 && path[3] == 0);
+    assert(pe32_win32_get_last_error() == 122);
+    assert(pe32_win32_get_module_file_name_a(0, path, 1) == 1);
+    assert(path[0] == 0);
+    assert(pe32_win32_get_module_file_name_a(0, path, 0) == 0);
+    assert(pe32_win32_get_last_error() == 122);
+    assert(pe32_win32_get_module_file_name_a(0x1234, path, sizeof(path)) == 0);
+    assert(pe32_win32_get_last_error() == 126);
+
+    memset(startup, 0xaa, sizeof(startup));
+    pe32_win32_get_startup_info_a(startup);
+    assert(startup[0] == PE32_STARTUPINFOA_SIZE);
+    for (i = 1; i < PE32_STARTUPINFOA_SIZE; ++i) {
+        assert(startup[i] == 0);
+    }
+    for (i = PE32_STARTUPINFOA_SIZE; i < sizeof(startup); ++i) {
+        assert(startup[i] == 0xaa);
+    }
+
+    environment = pe32_win32_get_environment_strings();
+    wide_environment = pe32_win32_get_environment_strings_w();
+    assert(environment && environment[0] == 0 && environment[1] == 0);
+    assert(wide_environment && !wide_environment[0] && !wide_environment[1]);
+    assert(pe32_win32_free_environment_strings_a(environment));
+    assert(pe32_win32_free_environment_strings_w(wide_environment));
+    assert(!pe32_win32_free_environment_strings_a((char *)wide_environment));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!pe32_win32_free_environment_strings_w((pe32_u16 *)environment));
+    assert(pe32_win32_get_last_error() == 87);
+
+    pe32_win32_initialize(0, 0);
+    assert(pe32_win32_get_command_line_a()[0] == 0);
+    assert(pe32_win32_get_module_file_name_a(0, path, sizeof(path)) == 0);
+    assert(pe32_win32_get_last_error() == 126);
+}
+
 static void test_win32_private_heaps(void)
 {
     void *heap, *second_heap;
@@ -422,7 +486,8 @@ int main(void)
     test_explicit_host_resolver();
     test_preloaded_win32_module_lookups();
     test_win32_tls_and_last_error();
+    test_win32_process_startup_subset();
     test_win32_private_heaps();
-    puts("PE32 module linker: imports, DLL lookup, TLS, heaps and bounds tests passed");
+    puts("PE32 linker: imports, DLL lookup, startup, TLS, heaps and bounds tests passed");
     return 0;
 }
