@@ -44,7 +44,7 @@ The repository now has:
   table. It never silently stubs an unknown Windows API. An optional external
   resolver can supply **explicitly implemented** platform shim addresses.
 - `src/pe32_win32.h` and `src/pe32_win32.c`: a deliberately narrow `stdcall`
-  `KERNEL32.dll` shim with **31** exact exports. The preloaded-module registry
+  `KERNEL32.dll` shim with **35** exact exports. The preloaded-module registry
   supports `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA`; the EXE
   uses the first two to locate the simulation exports. The registry returns
   image bases as Windows HMODULEs and supports named/ordinal lookups. The
@@ -68,6 +68,12 @@ The repository now has:
   GCC sequentially consistent, atomic 32-bit operations, including wraparound.
   Locale-dependent `lstrcmpA`/`lstrcmpiA` remain unresolved rather than
   exposing unfaithful ASCII comparisons.
+  `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`
+  and `DeleteCriticalSection` reproduce the 24-byte Windows i386 structure's
+  unlocked/owned/recursive counts for the **one synthetic Win32 thread**. The
+  shim does not allocate NT debug records, contend, block, or protect data
+  across real Linux threads. These functions must be replaced with genuine
+  synchronization before enabling `CreateThread` or async callbacks.
 - `src/pe32_heap.h` and `src/pe32_heap.c`: six further `KERNEL32.dll` entry
   points required by the original CRT: `HeapCreate`, `HeapDestroy`,
   `HeapAlloc`, `HeapReAlloc`, `HeapFree`, and `HeapSize`. A Linux `mmap`/`munmap`
@@ -92,7 +98,8 @@ The repository now has:
   truncation, empty environment, synthetic process/thread handles, TLS
   exhaustion/reuse/last-error contracts, private heap
   allocation/reallocation/free, bounded ANSI string helpers, atomic 32-bit
-  increment/decrement and bounds/last-error contracts, and
+  increment/decrement, recursive single-thread critical-section bookkeeping
+  and bounds/last-error contracts, and
   refusal of malformed/missing/forwarded imports), plus PE32 synthetic
   fixtures, two-module imported-function calls, dynamic-DLL lookup, TLS,
   heap and process-startup imported-call execution tests.
@@ -100,7 +107,7 @@ The repository now has:
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution and 31 early Windows API stubs, but **no full** Win32 API
+import resolution and 35 early Windows API stubs, but **no full** Win32 API
 layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
 integration. The
 mapping currently uses writable/executable pages; treat the
@@ -150,8 +157,8 @@ verified `SIM_*` exports. Both have relocations and no TLS directory. Details
 and executable checksums are in [binary-investigation](binary-investigation.md).
 
 Of the **396 static imported symbols** in the original EXE and DLL combined,
-the 31-function shim covers **53 individual imports** (29 in the EXE,
-24 in the DLL). The other **343** imported symbols remain unsatisfied.
+the 35-function shim covers **61 individual imports** (33 in the EXE,
+28 in the DLL). The other **335** imported symbols remain unsatisfied.
 Even though both PE files have no *static TLS directory*, they import the
 `Tls*` functions for dynamically allocated runtime thread-local state.
 
@@ -172,7 +179,7 @@ A-10 code execution or SDL3 game output is claimed.
    function Win32/COM behavior requirements. Keep the files ignored.
 2. **Dual PE module loader (core linker and preloaded lookup implemented).**
    Both modules map; named and ordinal exports resolve, and the IAT is patched
-   with complete pre-validation. A 31-function, preloaded-only Kernel32
+   with complete pre-validation. A 35-function, preloaded-only Kernel32
    shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
    `A10Sim.dll` and basic single-thread CRT startup/TLS/error/heap handling. Host C tests
    pass. Remaining: execute the synthetic two-module, dynamic-lookup and TLS

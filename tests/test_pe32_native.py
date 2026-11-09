@@ -424,6 +424,10 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_lstrcat_a', 8),
             ('pe32_win32_interlocked_increment', 4),
             ('pe32_win32_interlocked_decrement', 4),
+            ('pe32_win32_initialize_critical_section', 4),
+            ('pe32_win32_enter_critical_section', 4),
+            ('pe32_win32_leave_critical_section', 4),
+            ('pe32_win32_delete_critical_section', 4),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -589,8 +593,10 @@ class OriginalDiscTests(unittest.TestCase):
                        'GetCurrentProcess', 'GetCurrentThread',
                        'GetCurrentThreadId', 'lstrlenA', 'lstrcpyA',
                        'lstrcpynA', 'lstrcatA', 'InterlockedIncrement',
-                       'InterlockedDecrement'}
-        for imports, count in ((exe_imports, 29), (dll_imports, 24)):
+                       'InterlockedDecrement', 'InitializeCriticalSection',
+                       'EnterCriticalSection', 'LeaveCriticalSection',
+                       'DeleteCriticalSection'}
+        for imports, count in ((exe_imports, 33), (dll_imports, 28)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {

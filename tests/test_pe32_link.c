@@ -406,6 +406,54 @@ static void test_win32_strings_and_interlocked(void)
     assert(pe32_win32_get_last_error() == 0x12345678);
 }
 
+static void test_win32_single_thread_critical_sections(void)
+{
+    struct pe32_critical_section section;
+    struct pe32_critical_section second;
+
+    assert(sizeof(section) == 24);
+    memset(&section, 0x55, sizeof(section));
+    pe32_win32_initialize(0, 0);
+    pe32_win32_set_last_error(0xface);
+
+    pe32_win32_initialize_critical_section(&section);
+    assert(section.debug_info == 0);
+    assert(section.lock_count == 0xffffffffu);
+    assert(section.recursion_count == 0);
+    assert(section.owning_thread == 0);
+    assert(section.lock_semaphore == 0);
+    assert(section.spin_count == 0);
+
+    pe32_win32_enter_critical_section(&section);
+    assert(section.lock_count == 0);
+    assert(section.recursion_count == 1);
+    assert(section.owning_thread == 1);
+    pe32_win32_enter_critical_section(&section);
+    assert(section.lock_count == 1);
+    assert(section.recursion_count == 2);
+
+    pe32_win32_initialize_critical_section(&second);
+    pe32_win32_enter_critical_section(&second);
+    pe32_win32_leave_critical_section(&section);
+    assert(section.lock_count == 0);
+    assert(section.recursion_count == 1);
+    assert(section.owning_thread == 1);
+    pe32_win32_leave_critical_section(&second);
+    assert(second.lock_count == 0xffffffffu);
+    assert(second.owning_thread == 0);
+    pe32_win32_leave_critical_section(&section);
+    assert(section.lock_count == 0xffffffffu);
+    assert(section.recursion_count == 0);
+    assert(section.owning_thread == 0);
+
+    pe32_win32_leave_critical_section(&section); /* Invalid: no corruption. */
+    assert(section.lock_count == 0xffffffffu);
+    pe32_win32_delete_critical_section(&section);
+    pe32_win32_delete_critical_section(&second);
+    assert(section.lock_count == 0xffffffffu);
+    assert(pe32_win32_get_last_error() == 0xface);
+}
+
 static void test_win32_private_heaps(void)
 {
     void *heap, *second_heap;
@@ -532,7 +580,8 @@ int main(void)
     test_win32_tls_and_last_error();
     test_win32_process_startup_subset();
     test_win32_strings_and_interlocked();
+    test_win32_single_thread_critical_sections();
     test_win32_private_heaps();
-    puts("PE32 linker: imports, DLL lookup, startup, strings, atomics, TLS, heaps and bounds tests passed");
+    puts("PE32 linker: imports, DLL lookup, startup, strings, synchronization, TLS, heaps and bounds tests passed");
     return 0;
 }

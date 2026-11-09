@@ -55,6 +55,28 @@ char *PE32_WINAPI pe32_win32_lstrcat_a(char *dest, const char *source);
 pe32_u32 PE32_WINAPI pe32_win32_interlocked_increment(volatile pe32_u32 *value);
 pe32_u32 PE32_WINAPI pe32_win32_interlocked_decrement(volatile pe32_u32 *value);
 
+/* The Windows NT/i386 RTL_CRITICAL_SECTION layout is exactly 24 bytes.
+ * Supported only while this runtime has one synthetic Windows thread; its
+ * bookkeeping permits recursive acquisition but is NOT a multi-thread lock.
+ * DebugInfo/LockSemaphore are opaque 32-bit Windows pointers/handles. */
+struct pe32_critical_section {
+    pe32_u32 debug_info;
+    pe32_u32 lock_count;
+    pe32_u32 recursion_count;
+    pe32_u32 owning_thread;
+    pe32_u32 lock_semaphore;
+    pe32_u32 spin_count;
+};
+
+void PE32_WINAPI pe32_win32_initialize_critical_section(
+    struct pe32_critical_section *section);
+void PE32_WINAPI pe32_win32_enter_critical_section(
+    struct pe32_critical_section *section);
+void PE32_WINAPI pe32_win32_leave_critical_section(
+    struct pe32_critical_section *section);
+void PE32_WINAPI pe32_win32_delete_critical_section(
+    struct pe32_critical_section *section);
+
 /* Single-thread subset of Win32 last error and dynamically allocated TLS.
  * TLS values are 32-bit guest pointers/integers. These must NOT be used with
  * multiple Linux threads until a real per-thread implementation exists. */

@@ -24,6 +24,9 @@ static char command_line[PE32_COMMAND_LINE_CAPACITY];
 static char empty_environment_a[2];
 static pe32_u16 empty_environment_w[2];
 
+typedef char pe32_critical_section_size_check[
+    sizeof(struct pe32_critical_section) == 24 ? 1 : -1];
+
 static pe32_u32 string_length(const char *str)
 {
     pe32_u32 length = 0;
@@ -243,6 +246,59 @@ pe32_u32 PE32_WINAPI pe32_win32_interlocked_decrement(volatile pe32_u32 *value)
     return __atomic_sub_fetch(value, 1u, __ATOMIC_SEQ_CST);
 }
 
+void PE32_WINAPI pe32_win32_initialize_critical_section(
+    struct pe32_critical_section *section)
+{
+    /* 1990s Windows critical sections started with LockCount == -1. The
+     * DebugInfo allocation used by Windows is intentionally absent: nobody
+     * may dereference this as a real NT RTL_CRITICAL_SECTION internals. */
+    section->debug_info = 0;
+    section->lock_count = 0xffffffffu;
+    section->recursion_count = 0;
+    section->owning_thread = 0;
+    section->lock_semaphore = 0;
+    section->spin_count = 0;
+}
+
+void PE32_WINAPI pe32_win32_enter_critical_section(
+    struct pe32_critical_section *section)
+{
+    /* Only thread ID 1 can exist in this bootstrap. Once CreateThread is
+     * implemented, this MUST be replaced by real contention handling. */
+    if (!section->recursion_count) {
+        section->owning_thread = 1;
+    }
+    ++section->recursion_count;
+    ++section->lock_count;
+}
+
+void PE32_WINAPI pe32_win32_leave_critical_section(
+    struct pe32_critical_section *section)
+{
+    /* Leaving without owning the lock is invalid in Win32. Ignore it here
+     * rather than corrupting the single-thread bookkeeping. */
+    if (!section->recursion_count || section->owning_thread != 1) {
+        return;
+    }
+    --section->recursion_count;
+    --section->lock_count;
+    if (!section->recursion_count) {
+        section->owning_thread = 0;
+    }
+}
+
+void PE32_WINAPI pe32_win32_delete_critical_section(
+    struct pe32_critical_section *section)
+{
+    /* No kernel semaphore or heap-allocated DebugInfo was created. */
+    section->debug_info = 0;
+    section->lock_count = 0xffffffffu;
+    section->recursion_count = 0;
+    section->owning_thread = 0;
+    section->lock_semaphore = 0;
+    section->spin_count = 0;
+}
+
 void PE32_WINAPI pe32_win32_set_last_error(pe32_u32 error)
 {
     current_last_error = error;
@@ -386,6 +442,10 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("lstrcatA", pe32_win32_lstrcat_a)
     EXPOSE_KERNEL32("InterlockedIncrement", pe32_win32_interlocked_increment)
     EXPOSE_KERNEL32("InterlockedDecrement", pe32_win32_interlocked_decrement)
+    EXPOSE_KERNEL32("InitializeCriticalSection", pe32_win32_initialize_critical_section)
+    EXPOSE_KERNEL32("EnterCriticalSection", pe32_win32_enter_critical_section)
+    EXPOSE_KERNEL32("LeaveCriticalSection", pe32_win32_leave_critical_section)
+    EXPOSE_KERNEL32("DeleteCriticalSection", pe32_win32_delete_critical_section)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

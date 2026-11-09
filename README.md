@@ -33,6 +33,9 @@ Windows process environment or filesystem.
 Six additional original EXE imports implement native byte-string copy/append/
 length and atomic 32-bit increment/decrement; locale-aware string comparisons
 and Windows exception handling remain unimplemented.
+Single-threaded recursive critical-section bookkeeping also supports four
+functions imported by both game modules, without pretending to provide actual
+cross-thread mutual exclusion.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)
