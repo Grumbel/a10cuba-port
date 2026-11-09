@@ -44,7 +44,7 @@ The repository now has:
   table. It never silently stubs an unknown Windows API. An optional external
   resolver can supply **explicitly implemented** platform shim addresses.
 - `src/pe32_win32.h` and `src/pe32_win32.c`: a deliberately narrow `stdcall`
-  `KERNEL32.dll` shim with **35** exact exports. The preloaded-module registry
+  `KERNEL32.dll` shim with **42** exact exports. The preloaded-module registry
   supports `LoadLibraryA`, `GetProcAddress`, and `GetModuleHandleA`; the EXE
   uses the first two to locate the simulation exports. The registry returns
   image bases as Windows HMODULEs and supports named/ordinal lookups. The
@@ -84,6 +84,22 @@ The repository now has:
   inter-thread serialization, and it explicitly rejects executable heaps and
   exception-generating options until those semantics are implemented. The
   heap tests use an injectable memory backend on the host without 32-bit ELF.
+- `src/pe32_io.h` and `src/pe32_io.c`: seven additional `KERNEL32.dll`
+  functions used by the CRT: `GetStdHandle`, `SetStdHandle`, `SetHandleCount`,
+  `GetFileType`, `ReadFile`, `WriteFile`, and `CloseHandle`. Synthetic Win32
+  handles map initially to inherited Linux fds 0/1/2, support rebinding
+  standard slots, and are never passed directly to the Linux kernel. The
+  freestanding i386 backend uses Linux `read`, `write`, and `fstat64` syscalls;
+  the host tests inject fake I/O. `GetFileType` recognizes redirected regular
+  files, terminals, and pipes/sockets from the kernel's file mode. Synchronous
+  reads/writes return actual byte counts and translate common Linux errors to
+  Win32 last-error codes. Closing a synthetic standard handle invalidates it
+  **without** closing the loader's diagnostic file descriptors. This layer
+  does **not** provide `CreateFileA`, general file handles, Win32 path
+  translation, overlapped I/O, console screens, or real handle duplication.
+  The original PE's subsystem is Windows GUI, so real Windows standard handles
+  could instead be NULL; providing inherited fds is an explicit bootstrap
+  configuration, not an exact process-creation emulation.
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
@@ -98,16 +114,16 @@ The repository now has:
   truncation, empty environment, synthetic process/thread handles, TLS
   exhaustion/reuse/last-error contracts, private heap
   allocation/reallocation/free, bounded ANSI string helpers, atomic 32-bit
-  increment/decrement, recursive single-thread critical-section bookkeeping
-  and bounds/last-error contracts, and
+  increment/decrement, recursive single-thread critical-section bookkeeping,
+  inherited/redirected standard-handle I/O and bounds/last-error contracts, and
   refusal of malformed/missing/forwarded imports), plus PE32 synthetic
   fixtures, two-module imported-function calls, dynamic-DLL lookup, TLS,
-  heap and process-startup imported-call execution tests.
+  heap, process-startup and standard-I/O imported-call execution tests.
   Actual x86 entry tests run on an i386-enabled Linux kernel or through
   `qemu-i386` and skip when neither is available.
 
 These are **bootstrap tools, not a game runtime**. They have module-to-module
-import resolution and 35 early Windows API stubs, but **no full** Win32 API
+import resolution and 42 early Windows API stubs, but **no full** Win32 API
 layer, Windows exception/stack/thread setup, true dynamic loading or SDL3
 integration. The
 mapping currently uses writable/executable pages; treat the
@@ -157,8 +173,8 @@ verified `SIM_*` exports. Both have relocations and no TLS directory. Details
 and executable checksums are in [binary-investigation](binary-investigation.md).
 
 Of the **396 static imported symbols** in the original EXE and DLL combined,
-the 35-function shim covers **61 individual imports** (33 in the EXE,
-28 in the DLL). The other **335** imported symbols remain unsatisfied.
+the 42-function shim covers **74 individual imports** (40 in the EXE,
+34 in the DLL). The other **322** imported symbols remain unsatisfied.
 Even though both PE files have no *static TLS directory*, they import the
 `Tls*` functions for dynamically allocated runtime thread-local state.
 
@@ -179,7 +195,7 @@ A-10 code execution or SDL3 game output is claimed.
    function Win32/COM behavior requirements. Keep the files ignored.
 2. **Dual PE module loader (core linker and preloaded lookup implemented).**
    Both modules map; named and ordinal exports resolve, and the IAT is patched
-   with complete pre-validation. A 35-function, preloaded-only Kernel32
+   with complete pre-validation. A 42-function, preloaded-only Kernel32
    shim supports the EXE's eventual `LoadLibraryA`/`GetProcAddress` lookup of
    `A10Sim.dll` and basic single-thread CRT startup/TLS/error/heap handling. Host C tests
    pass. Remaining: execute the synthetic two-module, dynamic-lookup and TLS

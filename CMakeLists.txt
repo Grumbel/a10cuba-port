@@ -15,7 +15,7 @@ target_link_libraries(a10-bitmap-viewer PRIVATE a10-indexed-surface)
 
 # Portable PE32 import/export resolution, also linked into the freestanding
 # i386 runner by scripts/build-native-pe32.sh (no SDL or libc dependency).
-add_library(a10-pe32-link STATIC src/pe32_link.c src/pe32_win32.c src/pe32_heap.c)
+add_library(a10-pe32-link STATIC src/pe32_link.c src/pe32_win32.c src/pe32_heap.c src/pe32_io.c)
 target_compile_features(a10-pe32-link PRIVATE c_std_11)
 target_compile_options(a10-pe32-link PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(a10-pe32-link PUBLIC src)

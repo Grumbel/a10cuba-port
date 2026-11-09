@@ -36,6 +36,10 @@ and Windows exception handling remain unimplemented.
 Single-threaded recursive critical-section bookkeeping also supports four
 functions imported by both game modules, without pretending to provide actual
 cross-thread mutual exclusion.
+Seven standard-handle functions provide a Linux syscall-backed bridge for
+inherited stdin/stdout/stderr and synchronous reads/writes, including Win32
+file-type classification and last-error handling. They do not yet open game
+files, emulate a console, or support overlapped I/O.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

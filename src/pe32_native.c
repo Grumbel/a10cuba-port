@@ -15,6 +15,7 @@
 #include "pe32_link.h"
 #include "pe32_win32.h"
 #include "pe32_heap.h"
+#include "pe32_io.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -22,9 +23,9 @@ typedef unsigned int u32;
 typedef signed int s32;
 
 enum {
-    SYS_WRITE = 4, SYS_OPEN = 5,
+    SYS_READ = 3, SYS_WRITE = 4, SYS_OPEN = 5,
     SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90,
-    SYS_MUNMAP = 91,
+    SYS_MUNMAP = 91, SYS_FSTAT64 = 197,
     PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4,
     MAP_PRIVATE = 2, MAP_ANONYMOUS = 0x20, MAP_FIXED_NOREPLACE = 0x100000,
     MAX_FILE_SIZE = 64 * 1024 * 1024,
@@ -72,6 +73,16 @@ static void *map_heap_pages(u32 size)
 static void unmap_heap_pages(void *memory, u32 size)
 {
     (void)syscall2(SYS_MUNMAP, (u32)memory, size);
+}
+
+static s32 read_standard_fd(u32 fd, void *buffer, u32 count)
+{
+    return syscall3(SYS_READ, fd, (u32)buffer, count);
+}
+
+static s32 write_standard_fd(u32 fd, const void *buffer, u32 count)
+{
+    return syscall3(SYS_WRITE, fd, (u32)buffer, count);
 }
 
 static u32 string_length(const char *str)
@@ -139,6 +150,31 @@ static u32 read32(const u8 *data)
 {
     return (u32)data[0] | ((u32)data[1] << 8) |
            ((u32)data[2] << 16) | ((u32)data[3] << 24);
+}
+
+static s32 type_standard_fd(u32 fd)
+{
+    /* Linux i386 fstat64 writes its stable kernel stat64 structure. Per
+     * asm/stat.h, st_mode is the little-endian u32 at offset 16. 128 bytes
+     * suffice for the 96-byte structure without linking 32-bit libc. */
+    u8 stat_bytes[128];
+    s32 result = syscall2(SYS_FSTAT64, fd, (u32)stat_bytes);
+    u32 mode;
+    if (result < 0) {
+        return result;
+    }
+    mode = read32(stat_bytes + 16) & 0170000u;
+    if (mode == 0020000u) { /* S_IFCHR */
+        return PE32_FILE_TYPE_CHAR;
+    }
+    if (mode == 0010000u || mode == 0140000u) { /* FIFO or socket */
+        return PE32_FILE_TYPE_PIPE;
+    }
+    if (mode == 0100000u || mode == 0040000u || mode == 0060000u) {
+        /* Regular file, directory, block device. */
+        return PE32_FILE_TYPE_DISK;
+    }
+    return PE32_FILE_TYPE_UNKNOWN;
 }
 
 static void write32(u8 *data, u32 value)
@@ -444,6 +480,7 @@ int pe32_main(int argc, char **argv)
     struct pe32_module modules[2] = { {0}, {0} };
     int module_count = 0, link = 0, execute = 0, i;
     pe32_heap_set_backend(map_heap_pages, unmap_heap_pages);
+    pe32_io_set_backend(read_standard_fd, write_standard_fd, type_standard_fd);
     if (argc < 2 || argc > 5) {
         print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
         return 2;

@@ -5,6 +5,7 @@
 #include "pe32_link.h"
 #include "pe32_win32.h"
 #include "pe32_heap.h"
+#include "pe32_io.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -454,6 +455,129 @@ static void test_win32_single_thread_critical_sections(void)
     assert(pe32_win32_get_last_error() == 0xface);
 }
 
+static const char standard_input_data[] = "control-input";
+static char standard_output_data[32];
+static char standard_error_data[32];
+static pe32_u32 standard_input_offset;
+static pe32_u32 standard_output_offset;
+static pe32_u32 standard_error_offset;
+
+static int fake_standard_read(pe32_u32 fd, void *buffer, pe32_u32 count)
+{
+    pe32_u32 remaining;
+    if (fd != 0) {
+        return -9; /* EBADF */
+    }
+    remaining = (pe32_u32)sizeof(standard_input_data) - 1 -
+                standard_input_offset;
+    if (count > remaining) {
+        count = remaining;
+    }
+    memcpy(buffer, standard_input_data + standard_input_offset, count);
+    standard_input_offset += count;
+    return (int)count;
+}
+
+static int fake_standard_write(pe32_u32 fd, const void *buffer, pe32_u32 count)
+{
+    char *output;
+    pe32_u32 *offset;
+    if (count && ((const char *)buffer)[0] == '!') {
+        return -32; /* EPIPE */
+    }
+    if (fd == 1) {
+        output = standard_output_data;
+        offset = &standard_output_offset;
+    } else if (fd == 2) {
+        output = standard_error_data;
+        offset = &standard_error_offset;
+    } else {
+        return -9;
+    }
+    if (count > 32 - *offset) {
+        count = 32 - *offset;
+    }
+    memcpy(output + *offset, buffer, count);
+    *offset += count;
+    return (int)count;
+}
+
+static int fake_standard_type(pe32_u32 fd)
+{
+    if (fd == 0) {
+        return PE32_FILE_TYPE_PIPE;
+    }
+    if (fd == 1) {
+        return PE32_FILE_TYPE_DISK;
+    }
+    return fd == 2 ? (int)PE32_FILE_TYPE_CHAR : -9;
+}
+
+static void test_win32_standard_io(void)
+{
+    pe32_u32 in, out, err, transferred;
+    char input[32] = {0};
+    standard_input_offset = standard_output_offset = standard_error_offset = 0;
+    pe32_io_set_backend(fake_standard_read, fake_standard_write,
+                        fake_standard_type);
+    pe32_win32_initialize(0, 0);
+    pe32_win32_set_last_error(0xbeef);
+    in = pe32_win32_get_std_handle(PE32_STD_INPUT_HANDLE);
+    out = pe32_win32_get_std_handle(PE32_STD_OUTPUT_HANDLE);
+    err = pe32_win32_get_std_handle(PE32_STD_ERROR_HANDLE);
+    assert(in && out && err && in != out && out != err);
+    assert(pe32_win32_get_file_type(in) == PE32_FILE_TYPE_PIPE);
+    assert(pe32_win32_get_file_type(out) == PE32_FILE_TYPE_DISK);
+    assert(pe32_win32_get_file_type(err) == PE32_FILE_TYPE_CHAR);
+    assert(pe32_win32_set_handle_count(128) == 128);
+    assert(pe32_win32_get_last_error() == 0xbeef);
+
+    assert(pe32_win32_read_file(in, input, 7, &transferred, 0));
+    assert(transferred == 7 && !memcmp(input, "control", 7));
+    assert(pe32_win32_read_file(in, input + 7, 25, &transferred, 0));
+    assert(transferred == 6 && !strcmp(input, "control-input"));
+    assert(pe32_win32_read_file(in, input, 8, &transferred, 0));
+    assert(transferred == 0); /* EOF is success. */
+    assert(pe32_win32_read_file(in, 0, 0, &transferred, 0));
+    assert(transferred == 0);
+    assert(!pe32_win32_read_file(in, input, 1, 0, 0));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!pe32_win32_read_file(in, input, 1, &transferred, input));
+    assert(pe32_win32_get_last_error() == 87 && transferred == 0);
+
+    assert(pe32_win32_write_file(out, "hello", 5, &transferred, 0));
+    assert(transferred == 5 && !memcmp(standard_output_data, "hello", 5));
+    assert(pe32_win32_set_std_handle(PE32_STD_OUTPUT_HANDLE, err));
+    assert(pe32_win32_get_std_handle(PE32_STD_OUTPUT_HANDLE) == err);
+    assert(pe32_win32_write_file(err, "error", 5, &transferred, 0));
+    assert(transferred == 5 && !memcmp(standard_error_data, "error", 5));
+    assert(!pe32_win32_write_file(err, "!", 1, &transferred, 0));
+    assert(transferred == 0 && pe32_win32_get_last_error() == 109);
+    assert(!pe32_win32_write_file(in, "no", 2, &transferred, 0));
+    assert(transferred == 0 && pe32_win32_get_last_error() == 6);
+
+    assert(pe32_win32_get_std_handle(42) == PE32_INVALID_HANDLE_VALUE);
+    assert(pe32_win32_get_last_error() == 87);
+    assert(!pe32_win32_set_std_handle(42, out));
+    assert(pe32_win32_get_last_error() == 87);
+    assert(pe32_win32_set_std_handle(PE32_STD_INPUT_HANDLE, 0xdeadbeef));
+    assert(pe32_win32_get_file_type(0xdeadbeef) == PE32_FILE_TYPE_UNKNOWN);
+    assert(pe32_win32_get_last_error() == 6);
+
+    assert(pe32_win32_close_handle(err));
+    assert(!pe32_win32_close_handle(err));
+    assert(pe32_win32_get_last_error() == 6);
+    assert(!pe32_win32_write_file(
+        pe32_win32_get_std_handle(PE32_STD_OUTPUT_HANDLE), "x", 1,
+        &transferred, 0));
+    assert(pe32_win32_get_last_error() == 6);
+    pe32_win32_initialize(0, 0);
+    assert(pe32_win32_get_file_type(err) == PE32_FILE_TYPE_CHAR);
+    pe32_io_set_backend(0, 0, 0);
+    assert(pe32_win32_get_file_type(err) == PE32_FILE_TYPE_UNKNOWN);
+    assert(pe32_win32_get_last_error() == 6);
+}
+
 static void test_win32_private_heaps(void)
 {
     void *heap, *second_heap;
@@ -581,7 +705,8 @@ int main(void)
     test_win32_process_startup_subset();
     test_win32_strings_and_interlocked();
     test_win32_single_thread_critical_sections();
+    test_win32_standard_io();
     test_win32_private_heaps();
-    puts("PE32 linker: imports, DLL lookup, startup, strings, synchronization, TLS, heaps and bounds tests passed");
+    puts("PE32 linker: imports, DLL lookup, startup, strings, synchronization, I/O, TLS, heaps and bounds tests passed");
     return 0;
 }

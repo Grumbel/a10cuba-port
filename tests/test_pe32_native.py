@@ -273,6 +273,78 @@ def startup_fixture():
     return bytes(data)
 
 
+def standard_io_fixture():
+    """PE32 entry using inherited Linux stdout through Win32's handle API."""
+    base = 0x00400000
+    data = bytearray(fixture(image_base=base))
+    opt = 0x98
+    struct.pack_into('<II', data, opt + 104, 0x2020, 40)
+    struct.pack_into('<IIIII', data, 0x420, 0x2080, 0, 0, 0x20a0, 0x2080)
+    names = ['GetStdHandle', 'GetFileType', 'WriteFile']
+    for index, name in enumerate(names):
+        rva = 0x20c0 + index * 0x20
+        struct.pack_into('<I', data, 0x480 + index * 4, rva)
+        struct.pack_into('<H', data, 0x400 + rva - 0x2000, 0)
+        encoded = name.encode('ascii') + b'\0'
+        at = 0x402 + rva - 0x2000
+        data[at:at + len(encoded)] = encoded
+    data[0x4a0:0x4ad] = b'KERNEL32.dll\0'
+    data[0x580:0x586] = b'A10IO\n'
+
+    code = bytearray(b'\x53\x68\xf5\xff\xff\xff')  # push ebx; STD_OUTPUT_HANDLE
+    fixups = []
+    failed = []
+
+    def absolute_push(rva):
+        code.append(0x68)
+        fixups.append(0x1000 + len(code))
+        code.extend(struct.pack('<I', base + rva))
+
+    def call_import(index):
+        code.extend(b'\xff\x15')
+        fixups.append(0x1000 + len(code))
+        code.extend(struct.pack('<I', base + 0x2080 + 4 * index))
+
+    def branch_on_failure(opcode):
+        code.extend(bytes([opcode, 0]))
+        failed.append(len(code) - 1)
+
+    call_import(0)                  # GetStdHandle(STD_OUTPUT_HANDLE)
+    code.extend(b'\x89\xc3\x53')  # mov ebx,eax; push ebx
+    call_import(1)                  # GetFileType(handle)
+    code.extend(b'\x85\xc0')      # test eax,eax
+    branch_on_failure(0x74)         # je failure
+    code.extend(b'\x6a\x00')      # lpOverlapped = NULL
+    absolute_push(0x2190)           # lpNumberOfBytesWritten
+    code.extend(b'\x6a\x06')      # nNumberOfBytesToWrite = 6
+    absolute_push(0x2180)           # lpBuffer = "A10IO\n"
+    code.append(0x53)               # hFile = ebx
+    call_import(2)                  # WriteFile
+    code.extend(b'\x85\xc0')
+    branch_on_failure(0x74)
+    code.append(0xa1)               # mov eax,[bytes_written]
+    fixups.append(0x1000 + len(code))
+    code.extend(struct.pack('<I', base + 0x2190))
+    code.extend(b'\x83\xf8\x06')  # cmp eax,6
+    branch_on_failure(0x75)
+    code.extend(b'\xb8\x2a\x00\x00\x00\x5b\xc3')  # eax=42; pop ebx; ret
+    failure = len(code)
+    code.extend(b'\x31\xc0\x5b\xc3')  # eax=0; pop ebx; ret
+    for pos in failed:
+        distance = failure - (pos + 1)
+        assert 0 <= distance < 128
+        code[pos] = distance
+    assert len(code) <= 0x200
+    data[0x200:0x200 + len(code)] = code
+
+    entries = [0x3000 | (rva - 0x1000) for rva in fixups]
+    length = 8 + 2 * len(entries)
+    struct.pack_into('<II', data, opt + 136, 0x3000, length)
+    struct.pack_into('<II' + 'H' * len(entries), data, 0x600,
+                     0x1000, length, *entries)
+    return bytes(data)
+
+
 class ImportTests(unittest.TestCase):
     def test_no_imports(self):
         self.assertEqual(pe32_imports.PEImports(fixture()).imports(), [])
@@ -365,6 +437,11 @@ class ImportTests(unittest.TestCase):
                          ['GetCommandLineA', 'GetCurrentThreadId',
                           'GetModuleFileNameA', 'GetStartupInfoA'])
 
+    def test_standard_io_fixture_imports(self):
+        symbols = pe32_imports.PEImports(standard_io_fixture()).imports()[0]['symbols']
+        self.assertEqual([s['name'] for s in symbols],
+                         ['GetStdHandle', 'GetFileType', 'WriteFile'])
+
     @unittest.skipUnless(shutil.which('objdump'), 'binutils objdump unavailable')
     def test_fixture_is_recognized_by_binutils(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -428,6 +505,13 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_enter_critical_section', 4),
             ('pe32_win32_leave_critical_section', 4),
             ('pe32_win32_delete_critical_section', 4),
+            ('pe32_win32_get_std_handle', 4),
+            ('pe32_win32_set_std_handle', 8),
+            ('pe32_win32_set_handle_count', 4),
+            ('pe32_win32_get_file_type', 4),
+            ('pe32_win32_read_file', 20),
+            ('pe32_win32_write_file', 20),
+            ('pe32_win32_close_handle', 4),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -538,6 +622,15 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn('linked KERNEL32.dll!GetStartupInfoA', result.stdout)
         self.assertIn('Entry returned 42', result.stdout)
 
+    def test_standard_io_imported_function_calls(self):
+        result = self.invoke(standard_io_fixture(), '--run-entry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('linked KERNEL32.dll!GetStdHandle', result.stdout)
+        self.assertIn('linked KERNEL32.dll!GetFileType', result.stdout)
+        self.assertIn('linked KERNEL32.dll!WriteFile', result.stdout)
+        self.assertIn('A10IO\n', result.stdout)
+        self.assertIn('Entry returned 42', result.stdout)
+
 
 class HostLinkerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler unavailable')
@@ -550,6 +643,7 @@ class HostLinkerTests(unittest.TestCase):
                 str(ROOT / 'src/pe32_link.c'),
                 str(ROOT / 'src/pe32_win32.c'),
                 str(ROOT / 'src/pe32_heap.c'),
+                str(ROOT / 'src/pe32_io.c'),
                 str(ROOT / 'tests/test_pe32_link.c'), '-o', str(runner)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
@@ -595,8 +689,10 @@ class OriginalDiscTests(unittest.TestCase):
                        'lstrcpynA', 'lstrcatA', 'InterlockedIncrement',
                        'InterlockedDecrement', 'InitializeCriticalSection',
                        'EnterCriticalSection', 'LeaveCriticalSection',
-                       'DeleteCriticalSection'}
-        for imports, count in ((exe_imports, 33), (dll_imports, 28)):
+                       'DeleteCriticalSection', 'GetStdHandle', 'SetStdHandle',
+                       'SetHandleCount', 'GetFileType', 'ReadFile', 'WriteFile',
+                       'CloseHandle'}
+        for imports, count in ((exe_imports, 40), (dll_imports, 34)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {
@@ -655,7 +751,8 @@ class OriginalDiscTests(unittest.TestCase):
                 '-Werror', '-I', str(ROOT / 'src'),
                 str(ROOT / 'src/pe32_link.c'),
                 str(ROOT / 'src/pe32_win32.c'),
-                str(ROOT / 'src/pe32_heap.c'), '-o', str(library)],
+                str(ROOT / 'src/pe32_heap.c'),
+                str(ROOT / 'src/pe32_io.c'), '-o', str(library)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
             native = ctypes.CDLL(str(library))

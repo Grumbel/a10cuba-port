@@ -3,6 +3,7 @@
 
 #include "pe32_win32.h"
 #include "pe32_heap.h"
+#include "pe32_io.h"
 
 static const struct pe32_module *registered_modules;
 static pe32_u32 registered_count;
@@ -77,6 +78,7 @@ void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
     const char *path;
     pe32_u32 length = 0;
     pe32_heap_reset();
+    pe32_io_reset();
     registered_modules = modules;
     registered_count = modules ? count : 0;
     current_last_error = 0;
@@ -446,6 +448,13 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("EnterCriticalSection", pe32_win32_enter_critical_section)
     EXPOSE_KERNEL32("LeaveCriticalSection", pe32_win32_leave_critical_section)
     EXPOSE_KERNEL32("DeleteCriticalSection", pe32_win32_delete_critical_section)
+    EXPOSE_KERNEL32("GetStdHandle", pe32_win32_get_std_handle)
+    EXPOSE_KERNEL32("SetStdHandle", pe32_win32_set_std_handle)
+    EXPOSE_KERNEL32("SetHandleCount", pe32_win32_set_handle_count)
+    EXPOSE_KERNEL32("GetFileType", pe32_win32_get_file_type)
+    EXPOSE_KERNEL32("ReadFile", pe32_win32_read_file)
+    EXPOSE_KERNEL32("WriteFile", pe32_win32_write_file)
+    EXPOSE_KERNEL32("CloseHandle", pe32_win32_close_handle)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else
