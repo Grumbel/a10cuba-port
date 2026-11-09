@@ -38,8 +38,12 @@ functions imported by both game modules, without pretending to provide actual
 cross-thread mutual exclusion.
 Seven standard-handle functions provide a Linux syscall-backed bridge for
 inherited stdin/stdout/stderr and synchronous reads/writes, including Win32
-file-type classification and last-error handling. They do not yet open game
-files, emulate a console, or support overlapped I/O.
+file-type classification and last-error handling. `CreateFileA`, `GetFileSize`
+and `SetFilePointer` additionally support ordinary **read-only game data**
+under the EXE's directory. This early implementation accepts relative paths
+only, requires exact filename case on Linux, rejects symlinks and `..` path
+components, and does not support file creation, writes, sharing semantics,
+overlapped I/O or a Win32 console.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

@@ -81,6 +81,7 @@ void pe32_win32_initialize(const struct pe32_module *modules, pe32_u32 count)
     pe32_io_reset();
     registered_modules = modules;
     registered_count = modules ? count : 0;
+    pe32_io_set_image_path(registered_count ? registered_modules[0].path : 0);
     current_last_error = 0;
     for (i = 0; i < PE32_TLS_SLOT_COUNT; ++i) {
         tls_allocated[i] = 0;
@@ -455,6 +456,9 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("ReadFile", pe32_win32_read_file)
     EXPOSE_KERNEL32("WriteFile", pe32_win32_write_file)
     EXPOSE_KERNEL32("CloseHandle", pe32_win32_close_handle)
+    EXPOSE_KERNEL32("CreateFileA", pe32_win32_create_file_a)
+    EXPOSE_KERNEL32("GetFileSize", pe32_win32_get_file_size)
+    EXPOSE_KERNEL32("SetFilePointer", pe32_win32_set_file_pointer)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

@@ -22,10 +22,15 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef signed int s32;
 
+static u32 read32(const u8 *data);
+
 enum {
     SYS_READ = 3, SYS_WRITE = 4, SYS_OPEN = 5,
     SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90,
-    SYS_MUNMAP = 91, SYS_FSTAT64 = 197,
+    SYS_MUNMAP = 91, SYS_LLSEEK = 140, SYS_FSTAT64 = 197,
+    SYS_OPENAT = 295,
+    O_DIRECTORY = 00200000, O_NOFOLLOW = 00400000,
+    O_CLOEXEC = 02000000,
     PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4,
     MAP_PRIVATE = 2, MAP_ANONYMOUS = 0x20, MAP_FIXED_NOREPLACE = 0x100000,
     MAX_FILE_SIZE = 64 * 1024 * 1024,
@@ -52,6 +57,24 @@ static s32 syscall2(u32 number, u32 a, u32 b)
     s32 result;
     __asm__ volatile("int $0x80" : "=a"(result)
                      : "0"(number), "b"(a), "c"(b) : "memory");
+    return result;
+}
+
+static s32 syscall4(u32 number, u32 a, u32 b, u32 c, u32 d)
+{
+    s32 result;
+    __asm__ volatile("int $0x80" : "=a"(result)
+                     : "0"(number), "b"(a), "c"(b), "d"(c), "S"(d)
+                     : "memory");
+    return result;
+}
+
+static s32 syscall5(u32 number, u32 a, u32 b, u32 c, u32 d, u32 e)
+{
+    s32 result;
+    __asm__ volatile("int $0x80" : "=a"(result)
+                     : "0"(number), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e)
+                     : "memory");
     return result;
 }
 
@@ -175,6 +198,79 @@ static s32 type_standard_fd(u32 fd)
         return PE32_FILE_TYPE_DISK;
     }
     return PE32_FILE_TYPE_UNKNOWN;
+}
+
+static s32 open_game_read(const char *root, const char *relative)
+{
+    /* Reject symlinks for every component. A game path cannot escape its
+     * executable directory, even when a directory entry is a symlink.
+     * Exact filename case is required until Win32 case folding is ported. */
+    s32 fd = syscall3(SYS_OPEN, (u32)root,
+                      O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    while (*relative) {
+        char component[256];
+        u32 count = 0, flags = O_NOFOLLOW | O_CLOEXEC;
+        s32 next;
+        while (*relative && *relative != '/') {
+            if (count >= sizeof(component) - 1) {
+                (void)syscall1(SYS_CLOSE, (u32)fd);
+                return -36; /* ENAMETOOLONG */
+            }
+            component[count++] = *relative++;
+        }
+        component[count] = 0;
+        if (*relative == '/') {
+            flags |= O_DIRECTORY;
+            ++relative;
+        }
+        next = syscall4(SYS_OPENAT, (u32)fd, (u32)component, flags, 0);
+        (void)syscall1(SYS_CLOSE, (u32)fd);
+        if (next < 0) {
+            return next;
+        }
+        fd = next;
+    }
+    {
+        u8 stat_bytes[128];
+        s32 result = syscall2(SYS_FSTAT64, (u32)fd, (u32)stat_bytes);
+        if (result < 0 || (read32(stat_bytes + 16) & 0170000u) != 0100000u) {
+            (void)syscall1(SYS_CLOSE, (u32)fd);
+            return result < 0 ? result : -21; /* EISDIR/nonregular */
+        }
+    }
+    return fd;
+}
+
+static s32 close_game_fd(u32 fd)
+{
+    return syscall1(SYS_CLOSE, fd);
+}
+
+static s32 seek_game_fd(u32 fd, u32 low, u32 high, u32 method,
+                        u32 *result_low, u32 *result_high)
+{
+    u32 position[2] = {0, 0};
+    s32 result = syscall5(SYS_LLSEEK, fd, high, low, (u32)position, method);
+    if (result >= 0) {
+        *result_low = position[0];
+        *result_high = position[1];
+    }
+    return result;
+}
+
+static s32 size_game_fd(u32 fd, u32 *low, u32 *high)
+{
+    u8 stat_bytes[128];
+    s32 result = syscall2(SYS_FSTAT64, fd, (u32)stat_bytes);
+    if (result >= 0) {
+        /* Linux/i386 stat64: st_size starts at byte offset 44. */
+        *low = read32(stat_bytes + 44);
+        *high = read32(stat_bytes + 48);
+    }
+    return result;
 }
 
 static void write32(u8 *data, u32 value)
@@ -481,6 +577,8 @@ int pe32_main(int argc, char **argv)
     int module_count = 0, link = 0, execute = 0, i;
     pe32_heap_set_backend(map_heap_pages, unmap_heap_pages);
     pe32_io_set_backend(read_standard_fd, write_standard_fd, type_standard_fd);
+    pe32_io_set_file_backend(open_game_read, close_game_fd,
+                             seek_game_fd, size_game_fd);
     if (argc < 2 || argc > 5) {
         print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
         return 2;
