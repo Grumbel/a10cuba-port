@@ -143,6 +143,13 @@ The repository now has:
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
+- `flake.nix`: `nix build .#a10cuba-native` packages this bootstrap on
+  `x86_64-linux`. `nix run .#a10cuba-native` defaults to mapping the two
+  locally extracted, ignored original binaries (inspection only). Passing
+  `-- --link` attempts import binding and is still expected to report missing
+  APIs. `A10_CUBA_DATA_DIR` selects another extraction directory; explicitly
+  supplied loader arguments bypass the defaults. The Nix derivation itself
+  contains only the GPL source, never the copyrighted game binaries.
 - `tools/pe32_imports.py`: independent, read-only, host-Python PE import and
   export scanner listing DLL names, named/ordinal functions, export RVA,
   aliases and forwarders (`--exports`).

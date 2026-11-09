@@ -61,6 +61,27 @@ remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)
 for the exact scope and remaining work.
 
+On x86-64 Linux, Nix can compile the freestanding i386 bootstrap and run its
+current inspection mode. It needs no 32-bit libc or SDL3, but the kernel must
+support execution of 32-bit x86 ELF files. The proprietary game binaries are
+**not** included in the Nix build: extract your own disc to the ignored
+`data/disc/A-10Cuba/` directory first.
+
+```sh
+nix build .#a10cuba-native         # Compile the static Linux/i386 loader
+nix run .#a10cuba-native           # Map and inspect the EXE and simulation DLL
+nix run .#a10cuba-native -- --link  # Report unresolved Windows imports (expected to fail)
+
+# Override the default extracted-data directory:
+A10_CUBA_DATA_DIR=/path/to/A-10Cuba nix run .#a10cuba-native
+
+# Or pass explicit images/options to the native loader:
+nix run .#a10cuba-native -- /path/to/A10Cuba.exe /path/to/A10Sim.dll
+```
+
+The default command does **not** execute the game. `--run-entry` remains an
+experimental option for synthetic test images, not for the original EXE.
+
 ```sh
 ./scripts/build-native-pe32.sh
 python3 -m unittest discover -s tests -v

@@ -25,6 +25,8 @@ Run commands from `a10cuba-port/`. `nix develop` opens the pinned development en
 
 Build the SDL3 probe with `cmake -S . -B build -G Ninja && cmake --build build`. Run C tests with `ctest --test-dir build --output-on-failure` and Python tests with `python3 -m unittest discover -s tests -v`. Build the freestanding i386 loader with `./scripts/build-native-pe32.sh`; use `tools/pe32_imports.py` to inspect a locally supplied game binary. The SDL3 probe and PE32 bootstrap are not the game; Windows imports, process startup, DirectDraw and simulation interfaces still need work. Follow `docs/native-runtime-plan.md` and do not claim native execution tests passed when host i386 ELF support or `qemu-i386` is absent.
 
+`nix build .#a10cuba-native` packages the freestanding i386 loader on x86-64 Linux, while `nix run .#a10cuba-native` runs the non-executing PE32 mapping inspection on locally extracted game files. `nix run .#a10cuba-native -- --link` attempts import binding and is still expected to fail on missing Win32 APIs. The Nix build never includes proprietary files.
+
 ## Coding Style & Naming
 
 Follow nearby conventions: C uses clear `snake_case` identifiers and four-space indentation; Python uses standard four-space indentation. Preserve the spelling and case of legacy asset paths. Keep shell launchers safe for paths with spaces, quote expansions, and avoid modifying user data outside the documented XDG locations.
