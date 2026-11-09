@@ -195,6 +195,54 @@ pe32_u32 PE32_WINAPI pe32_win32_get_current_thread_id(void)
     return 1; /* Only one synthetic Win32 thread exists in this bootstrap. */
 }
 
+int PE32_WINAPI pe32_win32_lstrlen_a(const char *string)
+{
+    return string ? (int)string_length(string) : 0;
+}
+
+char *PE32_WINAPI pe32_win32_lstrcpy_a(char *dest, const char *source)
+{
+    char *output = dest;
+    while ((*dest++ = *source++) != 0) {
+        /* Copy through the terminating byte. */
+    }
+    return output;
+}
+
+char *PE32_WINAPI pe32_win32_lstrcpyn_a(char *dest, const char *source,
+                                        int max_length)
+{
+    int i;
+    if (max_length <= 0) {
+        return (char *)0;
+    }
+    for (i = 0; i < max_length - 1 && source[i]; ++i) {
+        dest[i] = source[i];
+    }
+    dest[i] = 0;
+    return dest;
+}
+
+char *PE32_WINAPI pe32_win32_lstrcat_a(char *dest, const char *source)
+{
+    char *output = dest;
+    dest += string_length(dest);
+    while ((*dest++ = *source++) != 0) {
+        /* Append through the terminating byte. */
+    }
+    return output;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_interlocked_increment(volatile pe32_u32 *value)
+{
+    return __atomic_add_fetch(value, 1u, __ATOMIC_SEQ_CST);
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_interlocked_decrement(volatile pe32_u32 *value)
+{
+    return __atomic_sub_fetch(value, 1u, __ATOMIC_SEQ_CST);
+}
+
 void PE32_WINAPI pe32_win32_set_last_error(pe32_u32 error)
 {
     current_last_error = error;
@@ -332,6 +380,12 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("GetCurrentProcess", pe32_win32_get_current_process)
     EXPOSE_KERNEL32("GetCurrentThread", pe32_win32_get_current_thread)
     EXPOSE_KERNEL32("GetCurrentThreadId", pe32_win32_get_current_thread_id)
+    EXPOSE_KERNEL32("lstrlenA", pe32_win32_lstrlen_a)
+    EXPOSE_KERNEL32("lstrcpyA", pe32_win32_lstrcpy_a)
+    EXPOSE_KERNEL32("lstrcpynA", pe32_win32_lstrcpyn_a)
+    EXPOSE_KERNEL32("lstrcatA", pe32_win32_lstrcat_a)
+    EXPOSE_KERNEL32("InterlockedIncrement", pe32_win32_interlocked_increment)
+    EXPOSE_KERNEL32("InterlockedDecrement", pe32_win32_interlocked_decrement)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

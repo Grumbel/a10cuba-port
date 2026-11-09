@@ -30,6 +30,9 @@ Early process/CRT imports (`GetCommandLineA`, `GetStartupInfoA`,
 handles) also have a **single-thread bootstrap implementation**. It uses an
 empty guest environment and the paths passed to the loader, not a real
 Windows process environment or filesystem.
+Six additional original EXE imports implement native byte-string copy/append/
+length and atomic 32-bit increment/decrement; locale-aware string comparisons
+and Windows exception handling remain unimplemented.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

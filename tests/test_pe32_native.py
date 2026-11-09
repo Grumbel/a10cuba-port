@@ -418,6 +418,12 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_get_startup_info_a', 4),
             ('pe32_win32_free_environment_strings_a', 4),
             ('pe32_win32_free_environment_strings_w', 4),
+            ('pe32_win32_lstrlen_a', 4),
+            ('pe32_win32_lstrcpy_a', 8),
+            ('pe32_win32_lstrcpyn_a', 12),
+            ('pe32_win32_lstrcat_a', 8),
+            ('pe32_win32_interlocked_increment', 4),
+            ('pe32_win32_interlocked_decrement', 4),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -426,6 +432,18 @@ class NativeRunnerTests(unittest.TestCase):
             self.assertIn(f'<{name}>:', result.stdout)
             self.assertRegex(result.stdout, r'\bret\s+\$0x' +
                              re.escape(format(stack_bytes, 'x')) + r'\b')
+
+    def test_win32_interlocked_shims_use_locked_instruction(self):
+        if not self.runner.is_file():
+            self.skipTest('build with scripts/build-native-pe32.sh first')
+        for name in ('pe32_win32_interlocked_increment',
+                     'pe32_win32_interlocked_decrement'):
+            result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
+                                     str(self.runner)], capture_output=True,
+                                    text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'<{name}>:', result.stdout)
+            self.assertRegex(result.stdout, r'\block xadd\b')
 
     def test_native_entry(self):
         result = self.invoke(fixture(), '--run-entry')
@@ -569,8 +587,10 @@ class OriginalDiscTests(unittest.TestCase):
                        'GetEnvironmentStrings', 'GetEnvironmentStringsW',
                        'FreeEnvironmentStringsA', 'FreeEnvironmentStringsW',
                        'GetCurrentProcess', 'GetCurrentThread',
-                       'GetCurrentThreadId'}
-        for imports, count in ((exe_imports, 23), (dll_imports, 24)):
+                       'GetCurrentThreadId', 'lstrlenA', 'lstrcpyA',
+                       'lstrcpynA', 'lstrcatA', 'InterlockedIncrement',
+                       'InterlockedDecrement'}
+        for imports, count in ((exe_imports, 29), (dll_imports, 24)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {

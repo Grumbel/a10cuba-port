@@ -41,6 +41,20 @@ pe32_u32 PE32_WINAPI pe32_win32_get_current_process(void);
 pe32_u32 PE32_WINAPI pe32_win32_get_current_thread(void);
 pe32_u32 PE32_WINAPI pe32_win32_get_current_thread_id(void);
 
+/* ANSI byte-string helpers imported by the original EXE. Callers must
+ * provide valid, non-overlapping buffers (there is no Win32 SEH yet).
+ * lstrcpynA's count includes the trailing NUL; nonpositive counts fail. */
+int PE32_WINAPI pe32_win32_lstrlen_a(const char *string);
+char *PE32_WINAPI pe32_win32_lstrcpy_a(char *dest, const char *source);
+char *PE32_WINAPI pe32_win32_lstrcpyn_a(char *dest, const char *source,
+                                        int max_length);
+char *PE32_WINAPI pe32_win32_lstrcat_a(char *dest, const char *source);
+
+/* 32-bit LONG operations with sequentially consistent atomic ordering.
+ * The caller's variable must be naturally 32-bit aligned. */
+pe32_u32 PE32_WINAPI pe32_win32_interlocked_increment(volatile pe32_u32 *value);
+pe32_u32 PE32_WINAPI pe32_win32_interlocked_decrement(volatile pe32_u32 *value);
+
 /* Single-thread subset of Win32 last error and dynamically allocated TLS.
  * TLS values are 32-bit guest pointers/integers. These must NOT be used with
  * multiple Linux threads until a real per-thread implementation exists. */

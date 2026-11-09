@@ -362,6 +362,50 @@ static void test_win32_process_startup_subset(void)
     assert(pe32_win32_get_last_error() == 126);
 }
 
+static void test_win32_strings_and_interlocked(void)
+{
+    char buffer[24] = {0};
+    volatile pe32_u32 counter = 0;
+
+    pe32_win32_initialize(0, 0);
+    pe32_win32_set_last_error(0x12345678);
+    assert(pe32_win32_lstrlen_a(0) == 0);
+    assert(pe32_win32_lstrlen_a("") == 0);
+    assert(pe32_win32_lstrlen_a("A\xc3\xb1") == 3); /* Byte count. */
+
+    assert(pe32_win32_lstrcpy_a(buffer, "Cuba") == buffer);
+    assert(!strcmp(buffer, "Cuba"));
+    assert(pe32_win32_lstrcat_a(buffer, "!") == buffer);
+    assert(!strcmp(buffer, "Cuba!"));
+    assert(pe32_win32_lstrcat_a(buffer, "") == buffer);
+    assert(!strcmp(buffer, "Cuba!"));
+
+    memset(buffer, 'X', sizeof(buffer));
+    assert(pe32_win32_lstrcpyn_a(buffer, "Longer", 5) == buffer);
+    assert(!strcmp(buffer, "Long"));
+    assert(buffer[5] == 'X');
+    assert(pe32_win32_lstrcpyn_a(buffer, "Hi", 8) == buffer);
+    assert(!strcmp(buffer, "Hi"));
+    assert(pe32_win32_lstrcpyn_a(buffer, "Hi", 1) == buffer);
+    assert(buffer[0] == 0);
+    buffer[0] = 'X';
+    assert(pe32_win32_lstrcpyn_a(buffer, "Hi", 0) == 0);
+    assert(buffer[0] == 'X');
+    assert(pe32_win32_lstrcpyn_a(buffer, "Hi", -1) == 0);
+    assert(buffer[0] == 'X');
+
+    assert(pe32_win32_interlocked_increment(&counter) == 1);
+    assert(counter == 1);
+    assert(pe32_win32_interlocked_decrement(&counter) == 0);
+    assert(pe32_win32_interlocked_decrement(&counter) == 0xffffffffu);
+    assert(counter == 0xffffffffu);
+    assert(pe32_win32_interlocked_increment(&counter) == 0);
+    counter = 0x7fffffffu;
+    assert(pe32_win32_interlocked_increment(&counter) == 0x80000000u);
+    assert(pe32_win32_interlocked_decrement(&counter) == 0x7fffffffu);
+    assert(pe32_win32_get_last_error() == 0x12345678);
+}
+
 static void test_win32_private_heaps(void)
 {
     void *heap, *second_heap;
@@ -487,7 +531,8 @@ int main(void)
     test_preloaded_win32_module_lookups();
     test_win32_tls_and_last_error();
     test_win32_process_startup_subset();
+    test_win32_strings_and_interlocked();
     test_win32_private_heaps();
-    puts("PE32 linker: imports, DLL lookup, startup, TLS, heaps and bounds tests passed");
+    puts("PE32 linker: imports, DLL lookup, startup, strings, atomics, TLS, heaps and bounds tests passed");
     return 0;
 }
