@@ -54,6 +54,7 @@ static pe32_io_open_read_fn backend_open_read;
 static pe32_io_close_fn backend_close;
 static pe32_io_seek_fn backend_seek;
 static pe32_io_size_fn backend_size;
+static pe32_io_stat_fn backend_stat;
 static pe32_u32 current_std_handles[STD_HANDLE_COUNT];
 static pe32_u8 open_std_handles[STD_HANDLE_COUNT];
 static char game_root[PATH_CAPACITY];
@@ -199,6 +200,11 @@ void pe32_io_set_file_backend(pe32_io_open_read_fn open_read,
     backend_close = close_fn;
     backend_seek = seek_fn;
     backend_size = size_fn;
+}
+
+void pe32_io_set_stat_backend(pe32_io_stat_fn stat_fn)
+{
+    backend_stat = stat_fn;
 }
 
 void pe32_io_reset(void)
@@ -509,4 +515,97 @@ pe32_u32 PE32_WINAPI pe32_win32_set_file_pointer(pe32_u32 handle,
         pe32_win32_set_last_error(ERROR_SUCCESS);
     }
     return low;
+}
+
+static struct pe32_filetime unix_filetime(pe32_u32 seconds,
+                                          pe32_u32 nanoseconds)
+{
+    /* FILETIME counts 100 ns intervals since 1601-01-01 UTC. The stat64
+     * seconds field is signed i386 time_t (1970 epoch). Clamp dates before
+     * 1601 and ignore invalid fractional seconds. */
+    long long epoch_seconds = (long long)(int)seconds + 11644473600LL;
+    unsigned long long ticks = epoch_seconds > 0 ?
+        (unsigned long long)epoch_seconds * 10000000ULL : 0;
+    struct pe32_filetime result;
+    if (nanoseconds < 1000000000u && epoch_seconds > 0) {
+        ticks += nanoseconds / 100u;
+    }
+    result.low = (pe32_u32)ticks;
+    result.high = (pe32_u32)(ticks >> 32);
+    return result;
+}
+
+static int stat_for_handle(pe32_u32 handle, struct pe32_io_stat *stat)
+{
+    pe32_u32 fd;
+    int readonly, result;
+    if (!fd_for_handle(handle, &fd, &readonly) || !backend_stat) {
+        pe32_win32_set_last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    (void)readonly;
+    result = backend_stat(fd, stat);
+    if (result < 0) {
+        pe32_win32_set_last_error(win32_io_error(-result));
+        return 0;
+    }
+    if ((stat->mode & 0170000u) != 0100000u) {
+        /* This read-only subset deals with regular files, not devices. */
+        pe32_win32_set_last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_get_file_time(
+    pe32_u32 handle, struct pe32_filetime *creation,
+    struct pe32_filetime *access, struct pe32_filetime *write)
+{
+    struct pe32_io_stat stat;
+    struct pe32_filetime modified;
+    if (!stat_for_handle(handle, &stat)) {
+        return 0;
+    }
+    modified = unix_filetime(stat.write_seconds, stat.write_nanoseconds);
+    if (creation) {
+        /* POSIX stat64 has no creation time; use the last write time as a
+         * documented approximation, never Linux inode-change (ctime). */
+        *creation = modified;
+    }
+    if (access) {
+        *access = unix_filetime(stat.access_seconds, stat.access_nanoseconds);
+    }
+    if (write) {
+        *write = modified;
+    }
+    return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_win32_get_file_information_by_handle(
+    pe32_u32 handle, struct pe32_file_information *information)
+{
+    struct pe32_io_stat stat;
+    if (!information) {
+        pe32_win32_set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!stat_for_handle(handle, &stat)) {
+        return 0;
+    }
+    information->attributes = 0x20u; /* FILE_ATTRIBUTE_ARCHIVE */
+    if (!(stat.mode & 0222u)) {
+        information->attributes |= 1u; /* FILE_ATTRIBUTE_READONLY */
+    }
+    information->write_time = unix_filetime(stat.write_seconds,
+                                            stat.write_nanoseconds);
+    information->creation_time = information->write_time;
+    information->access_time = unix_filetime(stat.access_seconds,
+                                             stat.access_nanoseconds);
+    information->volume_serial = 0; /* No virtual Windows volume yet. */
+    information->size_high = stat.size_high;
+    information->size_low = stat.size_low;
+    information->number_of_links = stat.links;
+    information->index_high = stat.inode_high;
+    information->index_low = stat.inode_low;
+    return 1;
 }

@@ -43,7 +43,10 @@ and `SetFilePointer` additionally support ordinary **read-only game data**
 under the EXE's directory. This early implementation accepts relative paths
 only, requires exact filename case on Linux, rejects symlinks and `..` path
 components, and does not support file creation, writes, sharing semantics,
-overlapped I/O or a Win32 console.
+overlapped I/O or a Win32 console. `GetFileTime` and
+`GetFileInformationByHandle` report native file metadata in Win32 structures;
+creation time is approximated by the last modification time and the virtual
+volume serial number is currently zero.
 It **does not resolve the
 remaining Windows OS imports or execute the game**. See the
 [native runtime plan](docs/native-runtime-plan.md)

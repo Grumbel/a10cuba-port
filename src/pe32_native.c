@@ -273,6 +273,29 @@ static s32 size_game_fd(u32 fd, u32 *low, u32 *high)
     return result;
 }
 
+static s32 stat_game_fd(u32 fd, struct pe32_io_stat *stat)
+{
+    u8 bytes[128];
+    s32 result = syscall2(SYS_FSTAT64, fd, (u32)bytes);
+    if (result < 0) {
+        return result;
+    }
+    /* Linux/i386 stat64 in asm/stat.h: mode@16, nlink@20, size@44,
+     * atime@64, mtime@72 and 64-bit inode@88. Time fields are seconds
+     * and nanoseconds, not Windows FILETIME values. */
+    stat->mode = read32(bytes + 16);
+    stat->links = read32(bytes + 20);
+    stat->size_low = read32(bytes + 44);
+    stat->size_high = read32(bytes + 48);
+    stat->inode_low = read32(bytes + 88);
+    stat->inode_high = read32(bytes + 92);
+    stat->access_seconds = read32(bytes + 64);
+    stat->access_nanoseconds = read32(bytes + 68);
+    stat->write_seconds = read32(bytes + 72);
+    stat->write_nanoseconds = read32(bytes + 76);
+    return 0;
+}
+
 static void write32(u8 *data, u32 value)
 {
     data[0] = (u8)value;
@@ -579,6 +602,7 @@ int pe32_main(int argc, char **argv)
     pe32_io_set_backend(read_standard_fd, write_standard_fd, type_standard_fd);
     pe32_io_set_file_backend(open_game_read, close_game_fd,
                              seek_game_fd, size_game_fd);
+    pe32_io_set_stat_backend(stat_game_fd);
     if (argc < 2 || argc > 5) {
         print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
         return 2;

@@ -538,6 +538,27 @@ static int fake_game_size(pe32_u32 fd, pe32_u32 *low, pe32_u32 *high)
     return 0;
 }
 
+static int fake_game_stat(pe32_u32 fd, struct pe32_io_stat *stat)
+{
+    pe32_u32 index = fd - 10;
+    if (fd < 10 || index >= fake_game_opens || !fake_game_files[index].active) {
+        return -9;
+    }
+    memset(stat, 0, sizeof(*stat));
+    stat->mode = 0100444u; /* Regular file, no write permission. */
+    stat->links = 3;
+    stat->size_low = fake_game_files[index].big ? 0xffffffffu :
+                     (pe32_u32)(sizeof(game_file_data) - 1);
+    stat->size_high = fake_game_files[index].big ? 1 : 0;
+    stat->inode_low = 0x9abcde00u;
+    stat->inode_high = 0x12345678u;
+    stat->access_seconds = 86400; /* 1970-01-02 00:00 UTC */
+    stat->access_nanoseconds = 500;
+    stat->write_seconds = 0; /* 1970-01-01 00:00 UTC */
+    stat->write_nanoseconds = 123456789;
+    return 0;
+}
+
 static int fake_standard_read(pe32_u32 fd, void *buffer, pe32_u32 count)
 {
     pe32_u32 remaining;
@@ -675,6 +696,11 @@ static void test_win32_standard_io(void)
 static void test_win32_readonly_game_files(void)
 {
     struct pe32_module modules[] = {exe, dll};
+    struct pe32_file_information information;
+    struct pe32_filetime creation, access, write;
+    const uint64_t unix_epoch = 116444736000000000ULL;
+    const uint64_t write_ticks = unix_epoch + 1234567;
+    const uint64_t access_ticks = unix_epoch + 86400ULL * 10000000ULL + 5;
     pe32_u32 first, second, big, metadata, high, count, position, handles[64];
     unsigned i;
     char data[sizeof(game_file_data)] = {0};
@@ -686,7 +712,10 @@ static void test_win32_readonly_game_files(void)
                         fake_standard_type);
     pe32_io_set_file_backend(fake_game_open, fake_game_close,
                              fake_game_seek, fake_game_size);
+    pe32_io_set_stat_backend(fake_game_stat);
     pe32_win32_initialize(modules, 2);
+    assert(sizeof(struct pe32_filetime) == 8);
+    assert(sizeof(struct pe32_file_information) == 52);
 
     assert(pe32_win32_create_file_a("../Media/Gear.wav", 0x80000000u, 1,
                                     0, 3, 0x80, 0) == PE32_INVALID_HANDLE_VALUE);
@@ -723,6 +752,27 @@ static void test_win32_readonly_game_files(void)
     assert(first != PE32_INVALID_HANDLE_VALUE &&
            second != PE32_INVALID_HANDLE_VALUE && first != second);
     assert(pe32_win32_get_file_type(first) == PE32_FILE_TYPE_DISK);
+    assert(pe32_win32_get_file_time(first, &creation, &access, &write));
+    assert(write.low == (pe32_u32)write_ticks);
+    assert(write.high == (pe32_u32)(write_ticks >> 32));
+    assert(creation.low == write.low && creation.high == write.high);
+    assert(access.low == (pe32_u32)access_ticks);
+    assert(access.high == (pe32_u32)(access_ticks >> 32));
+    assert(pe32_win32_get_file_time(first, 0, 0, 0));
+    memset(&information, 0xcd, sizeof(information));
+    assert(pe32_win32_get_file_information_by_handle(first, &information));
+    assert(information.attributes == 0x21);
+    assert(information.creation_time.low == creation.low);
+    assert(information.write_time.high == write.high);
+    assert(information.access_time.low == access.low);
+    assert(information.volume_serial == 0);
+    assert(information.size_high == 0);
+    assert(information.size_low == sizeof(game_file_data) - 1);
+    assert(information.number_of_links == 3);
+    assert(information.index_high == 0x12345678u);
+    assert(information.index_low == 0x9abcde00u);
+    assert(!pe32_win32_get_file_information_by_handle(first, 0));
+    assert(pe32_win32_get_last_error() == 87);
     high = 99;
     assert(pe32_win32_get_file_size(first, &high) == sizeof(game_file_data) - 1);
     assert(high == 0);
@@ -751,11 +801,17 @@ static void test_win32_readonly_game_files(void)
     assert(pe32_win32_get_last_error() == 6);
     assert(!pe32_win32_read_file(first, data, 1, &count, 0));
     assert(pe32_win32_get_last_error() == 6);
+    assert(!pe32_win32_get_file_time(first, &creation, 0, 0));
+    assert(pe32_win32_get_last_error() == 6);
+    assert(!pe32_win32_get_file_information_by_handle(first, &information));
+    assert(pe32_win32_get_last_error() == 6);
 
     big = pe32_win32_create_file_a("Big.dat", 0x80000000u, 1, 0, 3, 0, 0);
     assert(big != PE32_INVALID_HANDLE_VALUE);
     high = 0;
     assert(pe32_win32_get_file_size(big, &high) == 0xffffffffu && high == 1);
+    assert(pe32_win32_get_file_information_by_handle(big, &information));
+    assert(information.size_low == 0xffffffffu && information.size_high == 1);
     assert(pe32_win32_get_last_error() == 0); /* 0xffffffff is ambiguous. */
     assert(pe32_win32_get_file_size(big, 0) == 0xffffffffu);
     assert(pe32_win32_get_last_error() == 0); /* No high pointer: truncated. */
@@ -797,6 +853,7 @@ static void test_win32_readonly_game_files(void)
            == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_get_last_error() == 3); /* No image root. */
     pe32_io_set_file_backend(0, 0, 0, 0);
+    pe32_io_set_stat_backend(0);
     pe32_io_set_backend(0, 0, 0);
 }
 

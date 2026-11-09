@@ -28,12 +28,48 @@ typedef int (*pe32_io_seek_fn)(pe32_u32 fd, pe32_u32 low, pe32_u32 high,
                                pe32_u32 *result_high);
 typedef int (*pe32_io_size_fn)(pe32_u32 fd, pe32_u32 *low, pe32_u32 *high);
 
+/* Win32 FILETIME and BY_HANDLE_FILE_INFORMATION are fixed-size PE32 records.
+ * Linux backends return raw Unix seconds/nanoseconds; the shim converts them. */
+struct pe32_filetime {
+    pe32_u32 low;
+    pe32_u32 high;
+};
+
+struct pe32_file_information {
+    pe32_u32 attributes;
+    struct pe32_filetime creation_time;
+    struct pe32_filetime access_time;
+    struct pe32_filetime write_time;
+    pe32_u32 volume_serial;
+    pe32_u32 size_high;
+    pe32_u32 size_low;
+    pe32_u32 number_of_links;
+    pe32_u32 index_high;
+    pe32_u32 index_low;
+};
+
+struct pe32_io_stat {
+    pe32_u32 mode;
+    pe32_u32 links;
+    pe32_u32 size_low;
+    pe32_u32 size_high;
+    pe32_u32 inode_low;
+    pe32_u32 inode_high;
+    pe32_u32 access_seconds;
+    pe32_u32 access_nanoseconds;
+    pe32_u32 write_seconds;
+    pe32_u32 write_nanoseconds;
+};
+
+typedef int (*pe32_io_stat_fn)(pe32_u32 fd, struct pe32_io_stat *stat);
+
 void pe32_io_set_backend(pe32_io_read_fn read_fn, pe32_io_write_fn write_fn,
                          pe32_io_type_fn type_fn);
 void pe32_io_set_file_backend(pe32_io_open_read_fn open_read,
                               pe32_io_close_fn close_fn,
                               pe32_io_seek_fn seek_fn,
                               pe32_io_size_fn size_fn);
+void pe32_io_set_stat_backend(pe32_io_stat_fn stat_fn);
 void pe32_io_reset(void);
 void pe32_io_set_image_path(const char *image_path);
 
@@ -57,5 +93,10 @@ pe32_u32 PE32_WINAPI pe32_win32_set_file_pointer(pe32_u32 handle,
                                                    pe32_u32 distance,
                                                    pe32_u32 *distance_high,
                                                    pe32_u32 method);
+pe32_u32 PE32_WINAPI pe32_win32_get_file_time(
+    pe32_u32 handle, struct pe32_filetime *creation,
+    struct pe32_filetime *access, struct pe32_filetime *write);
+pe32_u32 PE32_WINAPI pe32_win32_get_file_information_by_handle(
+    pe32_u32 handle, struct pe32_file_information *information);
 
 #endif

@@ -515,6 +515,8 @@ class NativeRunnerTests(unittest.TestCase):
             ('pe32_win32_create_file_a', 28),
             ('pe32_win32_get_file_size', 8),
             ('pe32_win32_set_file_pointer', 16),
+            ('pe32_win32_get_file_time', 16),
+            ('pe32_win32_get_file_information_by_handle', 8),
         ):
             result = subprocess.run(['objdump', '-d', f'--disassemble={name}',
                                      str(self.runner)], capture_output=True,
@@ -695,8 +697,9 @@ class OriginalDiscTests(unittest.TestCase):
                        'DeleteCriticalSection', 'GetStdHandle', 'SetStdHandle',
                        'SetHandleCount', 'GetFileType', 'ReadFile', 'WriteFile',
                        'CloseHandle', 'CreateFileA', 'GetFileSize',
-                       'SetFilePointer'}
-        for imports, count in ((exe_imports, 43), (dll_imports, 35)):
+                       'SetFilePointer', 'GetFileTime',
+                       'GetFileInformationByHandle'}
+        for imports, count in ((exe_imports, 45), (dll_imports, 35)):
             kernel32 = next(module for module in imports
                             if module['dll'].lower() == 'kernel32.dll')
             self.assertEqual(len(implemented & {
