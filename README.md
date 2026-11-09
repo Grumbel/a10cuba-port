@@ -17,10 +17,11 @@ Install Nix with flakes enabled, then run `nix develop` from this directory. The
 
 This is the beginning of a **direct native x86** execution path, distinct from
 the existing Wine reference run and SDL3 bitmap viewer. The freestanding
-Linux/i386 runner can map a PE32 image and apply its base relocations without
-a 32-bit C library. It **does not yet resolve Windows imports or execute the
-game**. See the [native runtime plan](docs/native-runtime-plan.md) for the
-exact scope and remaining work.
+Linux/i386 runner can map two PE32 modules, apply their base relocations,
+resolve named/ordinal exports, and bind imports between supplied modules
+without a 32-bit C library. It **does not resolve Windows OS imports or
+execute the game**. See the [native runtime plan](docs/native-runtime-plan.md)
+for the exact scope and remaining work.
 
 ```sh
 ./scripts/build-native-pe32.sh
@@ -29,11 +30,14 @@ python3 -m unittest discover -s tests -v
 # Requires your own locally extracted original disc files:
 python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Cuba.exe
 python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --json
-./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --exports
+./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe data/disc/A-10Cuba/A10Sim.dll
+# Attempt to bind imports, expected to fail until Win32 services are ported:
+./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe data/disc/A-10Cuba/A10Sim.dll --link
 ```
 
-The last command is **inspection only**. `--run-entry` is an experimental
-option intended for the synthetic import-free PE fixture, **not** the game.
+The mapping command (without `--link`) is **inspection only**. `--run-entry`
+is an experimental option intended for synthetic PE fixtures, **not** the game.
 Executing original 32-bit code requires Linux i386 ELF support; `qemu-i386`
 can run its tests if the local kernel does not support that mode. The import
 scanner is host-Python and needs neither 32-bit support nor Wine.
@@ -81,7 +85,18 @@ The extractor refuses to overwrite an existing output. For a headless rendered s
 
 ## Extract the disc
 
-Provide your own game disc image. With the supplied image in the workspace parent directory, run:
+Provide your own game disc image. The copy used for reverse engineering is
+preserved across chats in the user's ChatGPT Library at
+`/A-10 Cuba/A10-Cuba-original-disc.iso.zst` (Zstandard-compressed ISO). Once
+restored locally, decompress it and extract the disc:
+
+```sh
+mkdir -p data/original
+zstd -d /path/to/A10-Cuba-original-disc.iso.zst -o data/original/A10-Cuba-original-disc.iso
+./scripts/extract-disc.sh data/original/A10-Cuba-original-disc.iso
+```
+
+Alternatively, with a supplied ISO in the workspace parent directory, run:
 
 ```sh
 ./scripts/extract-disc.sh
@@ -100,7 +115,9 @@ The script extracts the entire ISO to `data/disc/`, verifies key files, and refu
 
 The supplied ISO has SHA-256 `a122877d2353ee8540011dc4c47f8a3daf495f5fe5001f660e194f8ff69ad366`. Its executable and simulation DLL are PE32 i386 binaries, dated March 1997 in their PE headers. The executable imports `DDRAW.dll`, `DSOUND.dll`, `DPLAY.dll`, and other Windows libraries; the simulation DLL imports `KERNEL32.dll` and `USER32.dll`. Inspect imports with `objdump -p data/disc/A-10Cuba/A10Cuba.exe`. Imports alone do not establish how much code is assembly or the full scope of the port.
 
-The older Wine installation in `../install-old/` is reference material and contains differently dated binaries. Keep original game files and extracted assets out of commits.
+An older Wine installation may exist in `../install-old/` on the user's
+machine but is not required in a fresh checkout. Keep original game files
+and extracted assets out of commits.
 
 Further Ghidra findings and reproduction instructions are in [docs/binary-investigation.md](docs/binary-investigation.md).
 

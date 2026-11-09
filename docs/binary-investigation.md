@@ -2,6 +2,56 @@
 
 These observations apply to the extracted disc image identified in the README. Addresses are virtual addresses at each PE's preferred image base: `0x00400000` for the executable and `0x10000000` for the DLL. They may differ for other releases or when a module is relocated.
 
+## Verified PE32 headers and import inventory
+
+After the original ISO was made available, `tools/pe32_imports.py` independently
+confirmed the export names/RVAs below. `objdump -p` also confirms both images
+are PE32/i386 with HIGHLOW base relocation directories and **no static TLS or
+delay-import directory**. This is the 1997-11-21 disc image (ISO 9660 volume
+`A10 Cuba`), not a claim about every game revision.
+
+| Property | `A10Cuba.exe` | `A10Sim.dll` |
+| --- | --- | --- |
+| SHA-256 | `5af0a01a839338ec1b599b43d86fdc0897ba11dd24e660eaafc0ff1e559cde55` | `3aefdc3f7c41bee8ae99d286230637b893ad22c027c99086ad33a6467c607f51` |
+| Preferred base | `0x00400000` | `0x10000000` |
+| Entry RVA | `0x00024f10` | `0x0008db10` |
+| Image size in memory | `0x00ff4000` | `0x0027d000` |
+| Base relocation directory | `0x00fe0000`, `0x7308` bytes | `0x00271000`, `0x9ab0` bytes |
+| Static DLL imports | 15 descriptors, 335 imported functions | 2 descriptors, 61 imported functions |
+| Exported functions | 0 | 6 (`SIM_*` below) |
+
+| EXE imported DLL | Imported functions |
+| --- | ---: |
+| `KERNEL32.dll` | 123 |
+| `USER32.dll` | 130 |
+| `GDI32.dll` | 45 |
+| `CTL3D32.dll` | 9 |
+| `ADVAPI32.dll` | 6 |
+| `WINMM.dll` | 5 |
+| `COMCTL32.dll` | 5 |
+| `comdlg32.dll` | 3 |
+| `WINSPOOL.DRV` | 3 |
+| `SHELL32.dll` | 2 |
+| `DPLAY.dll` | 2 |
+| `DDRAW.dll` | 1 (`DirectDrawCreate`) |
+| `DSOUND.dll` | 1 (`DirectSoundCreate`) |
+| `AVIFIL32.dll` | 0 (dependency descriptor only) |
+| `MSVFW32.dll` | 0 (dependency descriptor only) |
+| **Total** | **335** |
+
+The simulation DLL imports 60 `KERNEL32.dll` functions and one `USER32.dll`
+function (`LoadCursorA`). These 61 imports are an independent requirement for
+executing simulation code on Linux. The EXE loads `A10Sim.dll` at runtime via
+`LoadLibraryA`/`GetProcAddress`; it is **not** a normal static import dependency.
+
+Reproduce import and export enumeration:
+
+```sh
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Cuba.exe
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --exports
+```
+
 Ghidra 12.0.4 analyzed both PE32 i386 files. Automatic analysis found 2,527 functions in `A10Cuba.exe` and 2,258 in `A10Sim.dll`; these are analysis estimates, not validated function counts. The DLL analysis emitted an unreadable-address warning at `0x1008d774`. Some executable instructions were not associated with recovered functions, so absence of a function or reference is not proof of absence of code. No original source code or definitive evidence of the original implementation language was found.
 
 ## Simulation boundary

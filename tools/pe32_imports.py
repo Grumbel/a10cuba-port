@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List imported Windows DLLs/functions in a 32-bit PE image.
+"""List imported Windows DLLs/functions or exported symbols in a 32-bit PE.
 
 This produces the API inventory required before replacing Windows/DirectDraw
 calls. It only reads the image; no game assets are extracted or redistributed.
@@ -35,7 +35,11 @@ class PEImports:
             raise PEError('expected PE32 optional header')
         self.header_size = self.u32(opt + 60)
         directories = self.u32(opt + 92)
+        self.export_rva = self.export_size = 0
         self.import_rva = self.import_size = 0
+        if directories >= 1 and optional_size >= 104:
+            self.export_rva, self.export_size = struct.unpack(
+                '<II', self.read(opt + 96, 8))
         if directories >= 2 and optional_size >= 112:
             self.import_rva, self.import_size = struct.unpack(
                 '<II', self.read(opt + 104, 8))
@@ -112,19 +116,66 @@ class PEImports:
             result.append({'dll': self.cstring(dll_name), 'symbols': entries})
         raise PEError('unterminated import descriptor table')
 
+    def exports(self):
+        """Return DLL name and export address table, including ordinal-only entries.
+
+        Export ordinals are biased by the table's Base field. A function RVA
+        inside the export data directory is a forwarder string, not code.
+        """
+        if not self.export_rva and not self.export_size:
+            return {'dll': None, 'symbols': []}
+        if not self.export_rva or self.export_size < 40:
+            raise PEError('invalid export directory')
+        entry = self.read(self.rva_to_offset(self.export_rva, 40), 40)
+        (_, _, _, _, name_rva, ordinal_base, function_count, name_count,
+         functions_rva, names_rva, ordinals_rva) = struct.unpack('<IIHHIIIIIII', entry)
+        if function_count > len(self.data) // 4 or name_count > len(self.data) // 4:
+            raise PEError('export table count exceeds image')
+
+        # Multiple public names can alias the same EAT slot.
+        names_by_index = {}
+        for i in range(name_count):
+            name = self.cstring(self.u32(self.rva_to_offset(names_rva + 4 * i, 4)))
+            index = self.u16(self.rva_to_offset(ordinals_rva + 2 * i, 2))
+            if index >= function_count:
+                raise PEError('export name ordinal index exceeds function table')
+            names_by_index.setdefault(index, []).append(name)
+
+        result = []
+        for i in range(function_count):
+            rva = self.u32(self.rva_to_offset(functions_rva + 4 * i, 4))
+            if not rva:
+                continue  # Gap in the export ordinal range.
+            entry = {'ordinal': ordinal_base + i, 'rva': rva,
+                     'names': names_by_index.get(i, [])}
+            if self.export_rva <= rva < self.export_rva + self.export_size:
+                entry['forwarder'] = self.cstring(rva)
+            result.append(entry)
+        return {'dll': self.cstring(name_rva), 'symbols': result}
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('pe', type=Path, help='original Windows EXE or DLL')
     parser.add_argument('--json', action='store_true', help='print machine-readable inventory')
+    parser.add_argument('--exports', action='store_true',
+                        help='list the export address table instead of imports')
     args = parser.parse_args()
     try:
-        modules = PEImports(args.pe.read_bytes()).imports()
+        reader = PEImports(args.pe.read_bytes())
+        modules = reader.exports() if args.exports else reader.imports()
     except (OSError, PEError) as exc:
         print(f'{parser.prog}: {exc}', file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(modules, indent=2))
+    elif args.exports:
+        print(f"DLL export name: {modules['dll'] or '(none)'}")
+        for symbol in modules['symbols']:
+            names = ', '.join(symbol['names']) if symbol['names'] else '(ordinal only)'
+            detail = f" -> {symbol['forwarder']}" if 'forwarder' in symbol else ''
+            print(f"  #{symbol['ordinal']}: {names} @ RVA 0x{symbol['rva']:08x}{detail}")
+        print(f"{len(modules['symbols'])} exported address table entries")
     else:
         for module in modules:
             print(f"{module['dll']}: {len(module['symbols'])} imports")

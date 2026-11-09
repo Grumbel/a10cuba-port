@@ -5,11 +5,13 @@
  * Freestanding Linux/i386 PE32 loader bootstrap.
  *
  * Maps/copies original x86 machine code, applies HIGHLOW base relocations,
- * inspects imports, and can call an import-free test image's entry point.
- * This is NOT a Windows process implementation: no PEB, TEB, SEH, TLS,
- * Windows stack initialization, COM or imported Windows APIs yet.
- * It deliberately refuses to execute images that declare imports or TLS.
+ * resolves imports between supplied PE modules and can enter synthetic test
+ * images. This is NOT a Windows process implementation: no PEB, TEB, SEH,
+ * TLS, Win32 startup, COM or imported Windows OS APIs yet. It refuses to
+ * execute images with unresolved imports or TLS.
  */
+
+#include "pe32_link.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -225,7 +227,8 @@ static int inspect_imports(const u8 *image, u32 size, u32 rva, u32 length)
     return -1; /* Missing terminating import descriptor. */
 }
 
-static int load_image(const u8 *file, u32 length, int execute)
+static int load_image(const u8 *file, u32 length, const char *path,
+                      struct pe32_module *module)
 {
     u32 pe, coff, opt, section_table, sections, opt_size;
     u32 preferred, image_size, headers_size, entry, import_rva, import_size;
@@ -331,40 +334,39 @@ static int load_image(const u8 *file, u32 length, int execute)
     if (tls_rva || tls_size) {
         print("TLS directory present; initialization is not implemented\n");
     }
-    if (execute) {
-        int (*entry_point)(void);
-        int result;
-        if (imported || tls_rva || tls_size) {
-            print_error("PE32: cannot execute imports or TLS yet\n");
+    module->image = image;
+    module->size = image_size;
+    module->base = base;
+    module->entry_rva = entry;
+    module->export_rva = module->export_size = 0;
+    if (read32(file + opt + 92) >= 1 && opt_size >= 96 + 1 * 8) {
+        module->export_rva = read32(file + opt + 96);
+        module->export_size = read32(file + opt + 100);
+    }
+    module->import_rva = import_rva;
+    module->import_size = import_size;
+    module->tls_rva = tls_rva;
+    module->tls_size = tls_size;
+    module->path = path;
+    if (module->export_rva || module->export_size) {
+        const char *name = pe32_export_module_name(module);
+        if (!name) {
+            print_error("PE32: invalid export directory/name\n");
             return 1;
         }
-        print("Executing raw x86 entry point (no Windows environment)...\n");
-        entry_point = (int (*)(void))(image + entry);
-        result = entry_point();
-        print("Entry returned ");
-        print_decimal((u32)result);
+        print("  export module: ");
+        print(name);
         print("\n");
     }
     return 0;
 }
 
-int pe32_main(int argc, char **argv)
+static int load_file(const char *path, struct pe32_module *module)
 {
     s32 fd, end;
     const u8 *file;
-    int execute = 0, status;
-    if (argc != 2 && argc != 3) {
-        print_error("Usage: a10-pe32-native IMAGE [--run-entry]\n");
-        return 2;
-    }
-    if (argc == 3) {
-        if (!strings_equal(argv[2], "--run-entry")) {
-            print_error("PE32: unknown option\n");
-            return 2;
-        }
-        execute = 1;
-    }
-    fd = syscall3(SYS_OPEN, (u32)argv[1], 0, 0);
+    int status;
+    fd = syscall3(SYS_OPEN, (u32)path, 0, 0);
     if (fd < 0) {
         print_error("PE32: cannot open image\n");
         return 1;
@@ -381,6 +383,100 @@ int pe32_main(int argc, char **argv)
         print_error("PE32: could not map image file\n");
         return 1;
     }
-    status = load_image(file, (u32)end, execute);
+    status = load_image(file, (u32)end, path, module);
     return status;
+}
+
+static void link_report(void *context, const char *dll, const char *name,
+                        u32 ordinal, enum pe32_link_status status, u32 address)
+{
+    (void)context;
+    if (status == PE32_LINK_OK) {
+        print("  linked ");
+    } else {
+        print_error("PE32: missing or unsupported import (see stdout)\n");
+        print("  unresolved ");
+    }
+    print(dll);
+    print("!");
+    if (name) {
+        print(name);
+    } else {
+        print("#");
+        print_decimal(ordinal);
+    }
+    if (status == PE32_LINK_OK) {
+        print(" -> ");
+        print_hex(address);
+    } else if (status == PE32_LINK_FORWARDER) {
+        print(" (forwarded export not implemented)");
+    } else if (status == PE32_LINK_INVALID) {
+        print(" (invalid PE export)");
+    }
+    print("\n");
+}
+
+int pe32_main(int argc, char **argv)
+{
+    struct pe32_module modules[2] = { {0}, {0} };
+    int module_count = 0, link = 0, execute = 0, i;
+    if (argc < 2 || argc > 5) {
+        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
+        return 2;
+    }
+    for (i = 1; i < argc; ++i) {
+        if (strings_equal(argv[i], "--run-entry")) {
+            execute = 1;
+            link = 1;
+        } else if (strings_equal(argv[i], "--link")) {
+            link = 1;
+        } else if (argv[i][0] == '-' || module_count == 2) {
+            print_error("PE32: unknown option or too many modules\n");
+            return 2;
+        } else {
+            if (load_file(argv[i], &modules[module_count]) != 0) {
+                return 1;
+            }
+            ++module_count;
+        }
+    }
+    if (!module_count) {
+        print_error("PE32: missing IMAGE\n");
+        return 2;
+    }
+    if (link) {
+        for (i = 0; i < module_count; ++i) {
+            enum pe32_link_status status;
+            u32 linked_count = 0;
+            print("Binding ");
+            print(modules[i].path);
+            print("...\n");
+            status = pe32_bind_imports(&modules[i], modules, (u32)module_count,
+                                       link_report, (void *)0, &linked_count);
+            if (status != PE32_LINK_OK) {
+                print_error("PE32: module imports not fully resolved\n");
+                return 1;
+            }
+            print("  linked functions: ");
+            print_decimal(linked_count);
+            print("\n");
+        }
+    }
+    if (execute) {
+        int (*entry_point)(void);
+        int result;
+        for (i = 0; i < module_count; ++i) {
+            if (modules[i].tls_rva || modules[i].tls_size) {
+                print_error("PE32: cannot execute modules with TLS yet\n");
+                return 1;
+            }
+        }
+        print("Executing raw x86 entry point (no Windows environment)...\n");
+        entry_point = (int (*)(void))(modules[0].image + modules[0].entry_rva);
+        result = entry_point();
+        print("Entry returned ");
+        print_decimal((u32)result);
+        print("\n");
+    }
+    return 0;
 }

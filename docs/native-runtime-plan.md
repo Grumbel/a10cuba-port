@@ -33,24 +33,35 @@ The repository now has:
   loader** built from C and assembly, with no 32-bit glibc requirement.
   It validates PE32/i386 headers and sections, maps the original image at
   its preferred address when possible, copies section bytes and applies
-  `IMAGE_REL_BASED_HIGHLOW` relocations after rebasing. It inventories imported
-  DLL names and refuses to invoke the entry point while import or TLS
-  dependencies remain unresolved. It can call the entry of a tiny,
-  import-free **test** PE image directly on x86.
+  `IMAGE_REL_BASED_HIGHLOW` relocations after rebasing. It accepts **two PE32
+  modules** (typically EXE and simulation DLL) and inventories imported DLLs.
+  It refuses to enter an image with unresolved imports or TLS. It can call
+  a tiny, import-free **test** PE entry directly on x86.
+- `src/pe32_link.h` and `src/pe32_link.c`: the shared import/export linker.
+  It looks up a DLL by its PE export name or case-insensitive filename,
+  resolves exports by exact symbol name or ordinal, detects forwarded exports,
+  and validates *all* imports before writing a target module's import address
+  table. It never silently stubs an unknown Windows API. This is also the
+  resolver needed by future `LoadLibraryA`/`GetProcAddress` shims: the actual
+  dynamic Win32 functions are **not** implemented yet.
 - `scripts/build-native-pe32.sh`: builds a static i386 Linux executable via
   GCC/binutils (`-m32 -nostdlib`). It does **not** use GCC to translate the
   game's Windows x86 code; those instructions remain the original bytes.
-- `tools/pe32_imports.py`: independent, read-only, host-Python PE import
-  scanner listing DLL names, imported functions, ordinal imports, and hints.
+- `tools/pe32_imports.py`: independent, read-only, host-Python PE import and
+  export scanner listing DLL names, named/ordinal functions, export RVA,
+  aliases and forwarders (`--exports`).
   This works even when the host cannot execute i386 Linux binaries.
-- `tests/test_pe32_native.py`: synthetic fixtures for import enumeration and
-  raw x86 entry/rebasing/denial behavior. It runs execution tests on an
-  i386-enabled Linux kernel or through `qemu-i386`, and skips those tests when
-  neither option is available.
+- `tests/test_pe32_link.c` and `tests/test_pe32_native.py`: C linker tests run
+  with the **host compiler and UBSan** (including successful name/ordinal
+  binding and refusal of malformed/missing/forwarded imports), plus PE32
+  synthetic fixtures and two-module imported-function execution tests.
+  Actual x86 entry tests run on an i386-enabled Linux kernel or through
+  `qemu-i386` and skip when neither is available.
 
-These are **bootstrap tools, not a game runtime**. They have **no** PE import
-resolution, Win32 API layer, Windows exception/stack/thread setup, or SDL3
-integration. The mapping currently uses writable/executable pages; treat the
+These are **bootstrap tools, not a game runtime**. They have module-to-module
+import resolution, but **no** Win32 API layer, Windows exception/stack/thread
+setup, dynamic `LoadLibraryA`/`GetProcAddress`, or SDL3 integration. The
+mapping currently uses writable/executable pages; treat the
 runner as a development experiment for trusted binaries, **not** a sandbox or
 secure loader for files from strangers. `--run-entry` should only be used with
 the supplied synthetic fixtures at this stage.
@@ -75,35 +86,48 @@ you own:
 ```sh
 python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Cuba.exe
 python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --json
-./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe
+python3 tools/pe32_imports.py data/disc/A-10Cuba/A10Sim.dll --exports
+./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe data/disc/A-10Cuba/A10Sim.dll
+./build/a10-pe32-native data/disc/A-10Cuba/A10Cuba.exe data/disc/A-10Cuba/A10Sim.dll --link
 ```
 
-The last command maps and inspects the original image but **does not enter
-the game**; omitting `--run-entry` is deliberate. It only reports DLL names,
-not resolved imports. For the current native SDL3 bitmap probe, separately
-use the existing CMake and CTest commands in the README.
+The fourth command maps and inspects the original modules but **does not
+enter the game**. The fifth additionally attempts import binding and correctly
+fails for the original game because its 335 EXE and 61 DLL Win32 imports have
+no Linux replacements yet. **Do not** use `--run-entry` with the original
+binary until Win32 startup, COM, and CRT shims are implemented. For the current
+native SDL3 bitmap probe, separately use the CMake and CTest commands in
+the README.
 
-The ChatGPT development container used for this milestone had GCC/binutils
-and Python but **no Nix, CMake, SDL3, Wine, game ISO, or 32-bit libc**. The
-bootstrap compiled as a statically linked i386 ELF. The container's kernel
-refused to execute it (`Exec format error`), and a test-only QEMU installation
-was blocked by package-manager permissions. Thus the **Python parser tests
-ran**, while the **actual entry execution and relocation tests were skipped**.
-Neither an original A-10 binary run nor SDL3 game output is claimed.
+The original disc is now preserved in the user's ChatGPT Library as
+`/A-10 Cuba/A10-Cuba-original-disc.iso.zst` (archive SHA-256 is recorded in
+`AGENTS.md`). It was decompressed and extracted locally into ignored `data/`;
+both real PE files were inspected. The executable has **335 imported symbols
+across 15 DLLs**; the simulation DLL has **61 across 2 DLLs** and exactly six
+verified `SIM_*` exports. Both have relocations and no TLS directory. Details
+and executable checksums are in [binary-investigation](binary-investigation.md).
+
+The ChatGPT development container has GCC/binutils and Python but **no Nix,
+CMake, SDL3, Wine or 32-bit libc**. The bootstrap compiles as a static i386
+ELF. The container kernel refuses to execute i386 ELF (`Exec format error`),
+and QEMU installation is blocked by package-manager permissions. The C linker
+tests **run natively on the 64-bit host**; the **actual i386 entry execution,
+relocation and imported-function call tests remain skipped**. No original
+A-10 code execution or SDL3 game output is claimed.
 
 ## Next milestones (in dependency order)
 
-1. **Original binary inventory.** With a privately supplied original disc,
-   record import tables, export tables, TLS directories, relocations, section
-   layout and entrypoints of both `A10Cuba.exe` and `A10Sim.dll`. Keep binary
-   data ignored; commit only textual findings. Validate against Windows 1.2
-   and the existing Ghidra reports. The project currently knows six DLL
-   `SIM_*` exports and has already traced a first DirectDraw setup path.
-2. **Dual PE module loader.** Load the EXE and simulation DLL at their
-   preferred bases (or rebase both), resolve DLL exports, and populate import
-   address tables. Reject rather than mis-execute unsupported import types,
-   forwarded exports, TLS, or SEH until implemented. Start with synthetic
-   modules that make calls through an import thunk.
+1. **Original binary inventory (basic metadata complete).** Both actual files
+   have verified entry RVA, preferred base, relocation/import/export directory
+   sizes, DLL import counts, and DLL export names/RVAs. Remaining: import
+   call-site prioritization, executable revision comparison and function-by-
+   function Win32/COM behavior requirements. Keep the files ignored.
+2. **Dual PE module loader (core linker implemented).** Both modules map;
+   named and ordinal exports resolve, and the IAT is patched with complete
+   pre-validation. Host C tests pass. Remaining: execute synthetic two-module
+   test on a host that can run Linux/i386, validate actual mapped binaries,
+   and support dynamic Win32 loading and non-PE platform symbols. The EXE
+   uses `LoadLibraryA`/`GetProcAddress` for `A10Sim.dll`, not static imports.
 3. **Win32/CRT startup shim.** Implement the specific Windows imports the
    game actually calls, including allocation, file paths, registry settings,
    timing, thread-local state, events, window/input messages, and DLL
@@ -129,10 +153,10 @@ Neither an original A-10 binary run nor SDL3 game output is claimed.
    per changed frame, no per-instruction emulation. Later, replace verified
    functions with recompilable C/C++ for 64-bit, Windows and other CPUs.
 
-**Critical path:** getting the private original EXE/DLL available to a local
-test run, inventorying imports, then implementing the *minimal* Win32 and
-DirectDraw subset to reach the menu. The challenge is ABI and OS semantics,
-not raw x86 instruction execution speed.
+**Critical path:** with the original EXE/DLL now available and inventoried,
+implement the actual Win32/CRT startup subset and DirectDraw-to-SDL3 adapter
+needed to reach the menu. The challenge is ABI and OS semantics, not raw x86
+instruction execution speed.
 
 ## References
 

@@ -13,8 +13,18 @@ target_compile_features(a10-bitmap-viewer PRIVATE c_std_11)
 target_compile_options(a10-bitmap-viewer PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(a10-bitmap-viewer PRIVATE a10-indexed-surface)
 
+# Portable PE32 import/export resolution, also linked into the freestanding
+# i386 runner by scripts/build-native-pe32.sh (no SDL or libc dependency).
+add_library(a10-pe32-link STATIC src/pe32_link.c)
+target_compile_features(a10-pe32-link PRIVATE c_std_11)
+target_compile_options(a10-pe32-link PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(a10-pe32-link PUBLIC src)
+
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(test-pe32-link tests/test_pe32_link.c)
+    target_link_libraries(test-pe32-link PRIVATE a10-pe32-link)
+    add_test(NAME pe32-link COMMAND test-pe32-link)
     add_executable(test-indexed-surface tests/test_indexed_surface.c)
     target_compile_features(test-indexed-surface PRIVATE c_std_11)
     target_compile_options(test-indexed-surface PRIVATE -Wall -Wextra -Wpedantic)

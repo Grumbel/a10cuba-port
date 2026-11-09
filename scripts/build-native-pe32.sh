@@ -14,5 +14,6 @@ mkdir -p "$(dirname -- "$output")"
     -fno-builtin -fno-stack-protector -fno-pie -fno-pic \
     -fomit-frame-pointer -nostdlib -static -no-pie \
     -Wl,-e,_start -Wl,--build-id=none \
-    "$repo_dir/src/pe32_start.S" "$repo_dir/src/pe32_native.c" -o "$output"
+    "$repo_dir/src/pe32_start.S" "$repo_dir/src/pe32_native.c" \
+    "$repo_dir/src/pe32_link.c" -o "$output"
 printf 'Built %s\n' "$output"

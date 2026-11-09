@@ -35,6 +35,7 @@
             p7zip
             pkg-config
             python3
+            zstd
           ];
         };
       });
