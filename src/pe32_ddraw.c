@@ -3,6 +3,7 @@
 
 #include "pe32_ddraw.h"
 #include "pe32_stubs.h"
+#include "pe32_wnd.h"
 
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -380,7 +381,8 @@ static pe32_u32 PE32_WINAPI dd_restore_display_mode(pe32_u32 self)
 static pe32_u32 PE32_WINAPI dd_set_cooperative_level(pe32_u32 self, pe32_u32 hwnd,
                                                      pe32_u32 flags)
 {
-    (void)self; (void)hwnd; (void)flags;
+    (void)self; (void)flags;
+    pe32_wnd_set_game_window(hwnd);
     return DD_OK;
 }
 

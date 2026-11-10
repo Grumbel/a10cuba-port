@@ -890,8 +890,8 @@ int pe32_main(int argc, char **argv)
                              seek_game_fd, size_game_fd);
     pe32_io_set_stat_backend(stat_game_fd);
     pe32_io_set_directory_backend(open_game_directory, next_game_directory);
-    if (argc < 2 || argc > 12) {
-        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM] [--frame-fd N] [--input-fd N] [--audio-fd N]\n");
+    if (argc < 2 || argc > 16) {
+        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM] [--frame-fd N] [--input-fd N] [--audio-fd N] [--mission N]\n");
         return 2;
     }
     for (i = 1; i < argc; ++i) {
@@ -908,6 +908,8 @@ int pe32_main(int argc, char **argv)
             pe32_ddraw_set_present(host_present);
         } else if (strings_equal(argv[i], "--audio-fd") && i + 1 < argc) {
             audio_fd = (s32)parse_number(argv[++i]);
+        } else if (strings_equal(argv[i], "--mission") && i + 1 < argc) {
+            pe32_wnd_set_mission((int)parse_number(argv[++i]) - 1);
         } else if (strings_equal(argv[i], "--input-fd") && i + 1 < argc) {
             input_fd = (s32)parse_number(argv[++i]);
             pe32_user_set_input_poll(host_input_poll);

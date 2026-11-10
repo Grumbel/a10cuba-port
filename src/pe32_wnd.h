@@ -22,6 +22,10 @@ int pe32_wnd_post(pe32_u32 hwnd, pe32_u32 msg, pe32_u32 wparam,
 /* Window that should receive keyboard/mouse input (focus, else active), 0 if
  * none exists yet. */
 pe32_u32 pe32_wnd_input_target(void);
+void pe32_wnd_set_game_window(pe32_u32 hwnd);
+void pe32_wnd_set_mission(int index);
+int pe32_wnd_listbox_count(pe32_u32 hwnd);
+void pe32_wnd_listbox_select(pe32_u32 hwnd, int index);
 
 /* When set, a blocked GetMessage with nothing pending clicks the default
  * button (IDOK) of the active dialog, so unattended runs progress. */

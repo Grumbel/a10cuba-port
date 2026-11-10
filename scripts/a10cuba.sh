@@ -7,7 +7,8 @@ set -euo pipefail
 usage() {
   printf '%s\n' \
     'Usage: a10cuba [--disc DIRECTORY | --iso IMAGE | --game-dir DIRECTORY]' \
-    '               [--scale N] [--no-qemu] [-- host options]' \
+    '               [--mission N] [--scale N] [--no-qemu] [-- host options]' \
+    '--mission N starts mission N (1-12; default: the first in the list).' \
     'First run needs --iso or --disc (or run from the port directory) to copy' \
     'the game files into the XDG data directory (a10cuba-native/game). --game-dir uses an' \
     'existing directory containing A10Cuba.exe and A10Sim.dll instead.' \

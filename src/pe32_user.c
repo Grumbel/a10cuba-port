@@ -132,6 +132,39 @@ void pe32_user_poll_input(void)
 }
 
 /* Printable character for a key press, 0 if none (WM_CHAR is then skipped). */
+/* PC/AT set-1 scan code for a virtual key (0 if unknown); games read it from
+ * bits 16-23 of WM_KEYDOWN's lParam. */
+static pe32_u32 key_scan(pe32_u32 vk)
+{
+    static const unsigned char letters[26] = {
+        0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26,
+        0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1f, 0x14, 0x16, 0x2f, 0x11, 0x2d,
+        0x15, 0x2c };
+    if (vk >= 'A' && vk <= 'Z') return letters[vk - 'A'];
+    if (vk >= '1' && vk <= '9') return 0x02 + (vk - '1');
+    if (vk == '0') return 0x0b;
+    if (vk >= 0x70 && vk <= 0x79) return 0x3b + (vk - 0x70);   /* F1-F10 */
+    if (vk >= 0x60 && vk <= 0x69) {                            /* numpad */
+        static const unsigned char pad[10] = {0x52, 0x4f, 0x50, 0x51, 0x4b,
+                                              0x4c, 0x4d, 0x47, 0x48, 0x49};
+        return pad[vk - 0x60];
+    }
+    switch (vk) {
+    case 0x1b: return 0x01; case 0x08: return 0x0e; case 0x09: return 0x0f;
+    case 0x0d: return 0x1c; case 0x20: return 0x39; case 0x10: return 0x2a;
+    case 0x11: return 0x1d; case 0x12: return 0x38;
+    case 0x25: return 0x4b; case 0x26: return 0x48; case 0x27: return 0x4d;
+    case 0x28: return 0x50; case 0x21: return 0x49; case 0x22: return 0x51;
+    case 0x23: return 0x4f; case 0x24: return 0x47; case 0x2d: return 0x52;
+    case 0x2e: return 0x53; case 0x6b: return 0x4e; case 0x6d: return 0x4a;
+    case 0xbd: return 0x0c; case 0xbb: return 0x0d; case 0xbc: return 0x33;
+    case 0xbe: return 0x34; case 0xbf: return 0x35; case 0xba: return 0x27;
+    case 0xdb: return 0x1a; case 0xdd: return 0x1b; case 0xdc: return 0x2b;
+    case 0xde: return 0x28; case 0xc0: return 0x29;
+    default: return 0;
+    }
+}
+
 static pe32_u32 key_char(pe32_u32 vk)
 {
     int shift = key_down[0x10];
@@ -161,12 +194,12 @@ void pe32_user_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b)
         if (target) {
             if (b) {
                 /* Bit 30 marks auto-repeat; the host sends one event per press. */
-                pe32_wnd_post(target, 0x100, a, 1u | (was_down ? 1u << 30 : 0));
+                pe32_wnd_post(target, 0x100, a, 1u | (key_scan(a) << 16) | (was_down ? 1u << 30 : 0));
                 if (key_char(a)) {
-                    pe32_wnd_post(target, 0x102, key_char(a), 1);
+                    pe32_wnd_post(target, 0x102, key_char(a), 1u | (key_scan(a) << 16));
                 }
             } else {
-                pe32_wnd_post(target, 0x101, a, 1u | (3u << 30));
+                pe32_wnd_post(target, 0x101, a, 1u | (key_scan(a) << 16) | (3u << 30));
             }
         }
     } else if (type == PE32_INPUT_MOVE) {

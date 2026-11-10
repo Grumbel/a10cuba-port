@@ -5,7 +5,6 @@
 #include "pe32_user.h"
 #include "pe32_winmm.h"
 #include "pe32_proc.h"
-#include "pe32_stubs.h"
 
 /* On non-i386 hosts the resolver table is compiled out, leaving the
  * implementations unreferenced; they are still built to catch errors. */
@@ -60,7 +59,9 @@ static struct wnd windows[MAX_WINDOWS];
 static struct msg queue[MAX_QUEUE];
 static struct timer timers[MAX_TIMERS];
 static pe32_u32 queue_head, queue_tail;
-static pe32_u32 focus, active, capture, quit_pending, quit_code;
+#define LB_GETCURSEL_MSG 0x188u
+static int mission_choice = -1, mission_pick = -1;
+static pe32_u32 game_window, focus, active, capture, quit_pending, quit_code;
 static pe32_u32 modal_dialog;
 static int auto_accept;
 static pe32_wnd_idle_fn idle_hook;
@@ -254,6 +255,11 @@ static pe32_u32 PE32_WINAPI user_send_message_a(pe32_u32 hwnd, pe32_u32 msg,
                                                 pe32_u32 wparam, pe32_u32 lparam)
 {
     struct wnd *w = lookup(hwnd);
+    /* The mission dialog asks an unattached list control (hwnd 0) for its
+     * selection; answer with the mission chosen on the command line. */
+    if (!w && msg == LB_GETCURSEL_MSG && mission_pick >= 0) {
+        return (pe32_u32)mission_pick;
+    }
     return w ? call_proc(w->proc, hwnd, msg, wparam, lparam) : 0;
 }
 
@@ -345,6 +351,22 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
                     cmd = 3;
                 }
             }
+            if (mission_choice >= 0) {          /* mission list: pick one */
+                for (k = 0; k < 256; k++) {
+                    pe32_u32 lb = HWND_BASE + (pe32_u32)k;
+                    if (windows[k].used && windows[k].parent == modal_dialog &&
+                        windows[k].cls && str_eq_ci(windows[k].cls->name, "LISTBOX") &&
+                        pe32_wnd_listbox_count(lb) > 0) {
+                        int count = pe32_wnd_listbox_count(lb);
+                        int pick = mission_choice < count ? mission_choice : count - 1;
+                        pe32_wnd_listbox_select(lb, pick);
+                        /* LBN_SELCHANGE so the dialog updates its details. */
+                        pe32_wnd_post(modal_dialog, WM_COMMAND,
+                                      (1u << 16) | windows[k].id, lb);
+                        mission_choice = -1;
+                    }
+                }
+            }
             pe32_wnd_post(modal_dialog, WM_COMMAND, cmd, 0);
             continue;
         }
@@ -421,12 +443,149 @@ static pe32_u32 PE32_WINAPI user_kill_timer(pe32_u32 hwnd, pe32_u32 id)
 
 /* ---- windows ---------------------------------------------------------- */
 
+/* ---- minimal LISTBOX: item text/data and a current selection ----------- */
+
+enum { MAX_LISTBOXES = 8, LB_ITEMS = 64, LB_TEXT = 64,
+       LB_ADDSTRING = 0x180, LB_INSERTSTRING = 0x181, LB_DELETESTRING = 0x182,
+       LB_RESETCONTENT = 0x184, LB_SETCURSEL = 0x186, LB_GETCURSEL = 0x188,
+       LB_GETTEXT = 0x189, LB_GETTEXTLEN = 0x18a, LB_GETCOUNT = 0x18b,
+       LB_FINDSTRING = 0x18c, LB_GETITEMDATA = 0x199, LB_SETITEMDATA = 0x19a,
+       LB_ERR = 0xffffffffu };
+
+struct listbox {
+    pe32_u32 hwnd;
+    int count, cursel;
+    char text[LB_ITEMS][LB_TEXT];
+    pe32_u32 data[LB_ITEMS];
+};
+
+static struct listbox listboxes[MAX_LISTBOXES];
+
+static struct listbox *listbox_for(pe32_u32 hwnd, int create)
+{
+    int i, free_slot = -1;
+    for (i = 0; i < (int)MAX_LISTBOXES; i++) {
+        if (listboxes[i].hwnd == hwnd) {
+            return &listboxes[i];
+        }
+        if (!listboxes[i].hwnd && free_slot < 0) {
+            free_slot = i;
+        }
+    }
+    if (!create || free_slot < 0) {
+        return 0;
+    }
+    listboxes[free_slot].hwnd = hwnd;
+    listboxes[free_slot].count = 0;
+    listboxes[free_slot].cursel = -1;
+    return &listboxes[free_slot];
+}
+
+int pe32_wnd_listbox_count(pe32_u32 hwnd)
+{
+    struct listbox *lb = listbox_for(hwnd, 0);
+    return lb ? lb->count : 0;
+}
+
+static pe32_u32 listbox_message(pe32_u32 hwnd, pe32_u32 msg, pe32_u32 wparam,
+                                pe32_u32 lparam);
+
+void pe32_wnd_listbox_select(pe32_u32 hwnd, int index)
+{
+    listbox_message(hwnd, LB_SETCURSEL, (pe32_u32)index, 0);
+}
+
+static pe32_u32 listbox_message(pe32_u32 hwnd, pe32_u32 msg, pe32_u32 wparam,
+                                pe32_u32 lparam)
+{
+    struct listbox *lb = listbox_for(hwnd, 1);
+    int i, at;
+    if (!lb) {
+        return LB_ERR;
+    }
+    switch (msg) {
+    case LB_ADDSTRING:
+    case LB_INSERTSTRING:
+        if (lb->count >= (int)LB_ITEMS) {
+            return LB_ERR;
+        }
+        at = msg == LB_ADDSTRING || (int)wparam < 0 || (int)wparam > lb->count
+             ? lb->count : (int)wparam;
+        for (i = lb->count; i > at; i--) {
+            str_copy(lb->text[i], lb->text[i - 1], LB_TEXT);
+            lb->data[i] = lb->data[i - 1];
+        }
+        str_copy(lb->text[at], (const char *)(unsigned long)lparam, LB_TEXT);
+        lb->data[at] = 0;
+        lb->count++;
+        if (lb->cursel >= at) {
+            lb->cursel++;
+        }
+        return (pe32_u32)at;
+    case LB_DELETESTRING:
+        if ((int)wparam < 0 || (int)wparam >= lb->count) {
+            return LB_ERR;
+        }
+        for (i = (int)wparam; i + 1 < lb->count; i++) {
+            str_copy(lb->text[i], lb->text[i + 1], LB_TEXT);
+            lb->data[i] = lb->data[i + 1];
+        }
+        lb->count--;
+        if (lb->cursel >= lb->count) {
+            lb->cursel = -1;
+        }
+        return (pe32_u32)lb->count;
+    case LB_RESETCONTENT:
+        lb->count = 0;
+        lb->cursel = -1;
+        return 0;
+    case LB_SETCURSEL:
+        if ((int)wparam < 0 || (int)wparam >= lb->count) {
+            lb->cursel = -1;
+            return LB_ERR;
+        }
+        lb->cursel = (int)wparam;
+        return wparam;
+    case LB_GETCURSEL: return (pe32_u32)lb->cursel;
+    case LB_GETCOUNT: return (pe32_u32)lb->count;
+    case LB_GETTEXTLEN:
+        return (int)wparam >= 0 && (int)wparam < lb->count
+               ? (pe32_u32)str_len(lb->text[wparam]) : LB_ERR;
+    case LB_GETTEXT:
+        if ((int)wparam < 0 || (int)wparam >= lb->count || !lparam) {
+            return LB_ERR;
+        }
+        str_copy((char *)(unsigned long)lparam, lb->text[wparam], LB_TEXT);
+        return (pe32_u32)str_len(lb->text[wparam]);
+    case LB_FINDSTRING:
+        for (i = 0; i < lb->count; i++) {
+            if (str_eq_ci(lb->text[i], (const char *)(unsigned long)lparam)) {
+                return (pe32_u32)i;
+            }
+        }
+        return LB_ERR;
+    case LB_GETITEMDATA:
+        return (int)wparam >= 0 && (int)wparam < lb->count ? lb->data[wparam] : LB_ERR;
+    case LB_SETITEMDATA:
+        if ((int)wparam < 0 || (int)wparam >= lb->count) {
+            return LB_ERR;
+        }
+        lb->data[wparam] = lparam;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static pe32_u32 PE32_WINAPI def_window_proc(pe32_u32 hwnd, pe32_u32 msg,
                                             pe32_u32 wparam, pe32_u32 lparam)
 {
     struct wnd *w = lookup(hwnd);
     if (!w) {
         return 0;
+    }
+    if (w->cls && str_eq_ci(w->cls->name, "LISTBOX") && msg >= 0x180 && msg <= 0x1a0) {
+        return listbox_message(hwnd, msg, wparam, lparam);
     }
     switch (msg) {
     case WM_NCCREATE: return 1;
@@ -815,7 +974,32 @@ static pe32_u32 PE32_WINAPI user_set_focus(pe32_u32 hwnd)
     return old;
 }
 
-pe32_u32 pe32_wnd_input_target(void) { return focus ? focus : active; }
+/* Keys go to the window the game bound DirectDraw to (the cockpit), else to
+ * the focus/active window. */
+/* Zero-based index of the mission to pick when auto-accepting the list. */
+void pe32_wnd_set_mission(int index) { mission_choice = index; mission_pick = index; }
+
+void pe32_wnd_set_game_window(pe32_u32 hwnd)
+{
+    game_window = hwnd;
+    if (hwnd && lookup(hwnd)) {
+        /* A full-screen DirectDraw app is the foreground application:
+         * tell it so, or it treats itself as paused/inactive. */
+        active = hwnd;
+        focus = hwnd;
+        pe32_wnd_post(hwnd, 0x1c /* WM_ACTIVATEAPP */, 1, 0);
+        pe32_wnd_post(hwnd, 0x06 /* WM_ACTIVATE */, 1, 0);
+        pe32_wnd_post(hwnd, 0x07 /* WM_SETFOCUS */, 0, 0);
+    }
+}
+
+pe32_u32 pe32_wnd_input_target(void)
+{
+    if (game_window && lookup(game_window)) {
+        return game_window;
+    }
+    return focus ? focus : active;
+}
 
 static pe32_u32 PE32_WINAPI user_get_focus(void) { return focus; }
 

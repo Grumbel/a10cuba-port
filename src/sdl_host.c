@@ -187,8 +187,10 @@ static int usage(const char *program)
     fprintf(stderr,
             "Usage: %s [--runner PATH] [--game-dir DIR] [--no-qemu]\n"
             "          [--max-frames N] [--snapshot OUT.bmp] [--scale N]\n"
+            "          [--mission N]\n"
             "Runs the original A-10 Cuba! binaries from DIR (default\n"
-            "./data/disc/A-10Cuba) in the i386 runner and shows them in SDL.\n",
+            "./data/disc/A-10Cuba) in the i386 runner and shows them in SDL.\n"
+            "--mission N starts mission N (1 = first in the mission list).\n",
             program);
     return 2;
 }
@@ -198,7 +200,7 @@ int main(int argc, char **argv)
     const char *runner = getenv("A10_PE32_NATIVE_BIN");
     const char *game_dir = getenv("A10_CUBA_DATA_DIR");
     const char *snapshot = NULL;
-    int use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
+    int mission = 0, use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
     int frame_pipe[2], input_pipe[2], audio_pipe[2];
     SDL_AudioStream *audio = NULL;
     pid_t child;
@@ -219,9 +221,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) max_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--snapshot") && i + 1 < argc) snapshot = argv[++i];
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--mission") && i + 1 < argc) mission = atoi(argv[++i]);
         else return usage(argv[0]);
     }
     if (scale < 1) scale = 1;
+    if (mission < 0) return usage(argv[0]);
 
     if (pipe(frame_pipe) < 0 || pipe2(input_pipe, O_NONBLOCK) < 0 ||
         pipe2(audio_pipe, O_NONBLOCK) < 0) {
@@ -255,7 +259,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (child == 0) {
-        char exe[4096], dll[4096], fd_out[16], fd_in[16], fd_audio[16];
+        char exe[4096], dll[4096], fd_out[16], fd_in[16], fd_audio[16], mission_arg[16];
         /* The runner side of the input pipe must stay blocking-agnostic. */
         dup2(frame_pipe[1], 3);
         dup2(input_pipe[0], 4);
@@ -268,14 +272,21 @@ int main(int argc, char **argv)
         snprintf(fd_out, sizeof fd_out, "3");
         snprintf(fd_in, sizeof fd_in, "4");
         snprintf(fd_audio, sizeof fd_audio, "5");
-        if (use_qemu) {
-            execlp("qemu-i386", "qemu-i386", runner, exe, dll, "--run-entry",
-                   "--auto-accept", "--frame-fd", fd_out, "--input-fd", fd_in,
-                   "--audio-fd", fd_audio, (char *)NULL);
-        } else {
-            execl(runner, runner, exe, dll, "--run-entry", "--auto-accept",
-                  "--frame-fd", fd_out, "--input-fd", fd_in,
-                  "--audio-fd", fd_audio, (char *)NULL);
+        snprintf(mission_arg, sizeof mission_arg, "%d", mission);
+        {
+            /* qemu-i386 RUNNER ... or RUNNER ...; --mission only when asked. */
+            const char *argv_out[20];
+            int n = 0;
+            if (use_qemu) argv_out[n++] = "qemu-i386";
+            argv_out[n++] = runner;
+            argv_out[n++] = exe; argv_out[n++] = dll;
+            argv_out[n++] = "--run-entry"; argv_out[n++] = "--auto-accept";
+            argv_out[n++] = "--frame-fd"; argv_out[n++] = fd_out;
+            argv_out[n++] = "--input-fd"; argv_out[n++] = fd_in;
+            argv_out[n++] = "--audio-fd"; argv_out[n++] = fd_audio;
+            if (mission > 0) { argv_out[n++] = "--mission"; argv_out[n++] = mission_arg; }
+            argv_out[n] = NULL;
+            execvp(argv_out[0], (char *const *)argv_out);
         }
         perror("exec runner");
         _exit(127);
