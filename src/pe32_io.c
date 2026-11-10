@@ -715,10 +715,11 @@ pe32_u32 PE32_WINAPI pe32_win32_create_file_a(
     char resolved[PATH_CAPACITY];
     pe32_u32 slot;
     int fd;
+    (void)security;             /* MFC passes SECURITY_ATTRIBUTES; ignored */
     /* Read-only OPEN_EXISTING on ordinary files, with no asynchronous or
      * special-device flags. Do not let the original EXE modify its disc. */
     if (disposition != OPEN_EXISTING || (access & ~0x80120089u) ||
-        share_mode & ~7u || security || template_handle ||
+        share_mode & ~7u || template_handle ||
         (flags & ~(0x80u | 0x20u | 0x08000000u | 0x10000000u))) {
         pe32_win32_set_last_error(ERROR_ACCESS_DENIED);
         return PE32_INVALID_HANDLE_VALUE;

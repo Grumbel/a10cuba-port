@@ -190,6 +190,92 @@ pe32_u32 PE32_WINAPI pe32_user_set_message_queue(pe32_u32 size)
     return 1;
 }
 
+
+/* ---- wsprintf ----------------------------------------------------------- */
+
+/* Win32 wsprintf subset: flags - 0, width, precision, l/h, d i u x X c s %.
+ * Output is capped at 1024 bytes like the real API. Returns characters written. */
+static int format_va(char *out, const char *fmt, const pe32_u32 *args)
+{
+    char *o = out;
+    while (*fmt && o - out < 1023) {
+        int left = 0, zero = 0, width = 0, prec = -1, len, i;
+        char tmp[16], conv;
+        const char *text;
+        pe32_u32 v;
+        if (*fmt != '%') {
+            *o++ = *fmt++;
+            continue;
+        }
+        fmt++;
+        for (;; fmt++) {
+            if (*fmt == '-') left = 1;
+            else if (*fmt == '0') zero = 1;
+            else if (*fmt != '+' && *fmt != ' ' && *fmt != '#') break;
+        }
+        if (*fmt == '*') { width = (int)*args++; fmt++; }
+        while (*fmt >= '0' && *fmt <= '9') width = width * 10 + *fmt++ - '0';
+        if (*fmt == '.') {
+            fmt++;
+            prec = 0;
+            if (*fmt == '*') { prec = (int)*args++; fmt++; }
+            while (*fmt >= '0' && *fmt <= '9') prec = prec * 10 + *fmt++ - '0';
+        }
+        while (*fmt == 'l' || *fmt == 'h') fmt++;
+        conv = *fmt ? *fmt++ : 0;
+        text = tmp;
+        len = 0;
+        if (conv == 'd' || conv == 'i' || conv == 'u' || conv == 'x' ||
+            conv == 'X') {
+            int neg = 0;
+            pe32_u32 base = (conv == 'x' || conv == 'X') ? 16 : 10;
+            char rev[16];
+            int n = 0;
+            v = *args++;
+            if ((conv == 'd' || conv == 'i') && (int)v < 0) {
+                neg = 1;
+                v = 0 - v;
+            }
+            do {
+                pe32_u32 d = v % base;
+                rev[n++] = (char)(d < 10 ? '0' + d
+                                         : (conv == 'X' ? 'A' : 'a') + d - 10);
+                v /= base;
+            } while (v && n < 15);
+            if (neg) tmp[len++] = '-';
+            while (n) tmp[len++] = rev[--n];
+        } else if (conv == 'c') {
+            tmp[len++] = (char)*args++;
+        } else if (conv == 's') {
+            text = (const char *)(unsigned long)*args++;
+            if (!text) text = "(null)";
+            while (text[len] && (prec < 0 || len < prec)) len++;
+        } else if (conv == '%') {
+            tmp[len++] = '%';
+        } else {
+            continue;
+        }
+        for (i = len; !left && i < width && o - out < 1023; i++) {
+            *o++ = (zero && conv != 's' && conv != 'c') ? '0' : ' ';
+        }
+        for (i = 0; i < len && o - out < 1023; i++) *o++ = text[i];
+        for (i = len; left && i < width && o - out < 1023; i++) *o++ = ' ';
+    }
+    *o = 0;
+    return (int)(o - out);
+}
+
+int pe32_user_wsprintf_a(char *out, const char *fmt, ...)
+{
+    return format_va(out, fmt, (const pe32_u32 *)(&fmt + 1));
+}
+
+pe32_u32 PE32_WINAPI pe32_user_wvsprintf_a(char *out, const char *fmt,
+                                           const pe32_u32 *args)
+{
+    return (pe32_u32)format_va(out, fmt, args);
+}
+
 #if defined(__i386__)
 static int names_equal(const char *a, const char *b)
 {
@@ -222,6 +308,8 @@ enum pe32_link_status pe32_user_resolve(const char *name, pe32_u32 *address)
     EXPOSE_USER("LoadIconA", pe32_user_load_handle)
     EXPOSE_USER("LoadBitmapA", pe32_user_load_handle)
     EXPOSE_USER("LoadStringA", pe32_user_load_string_a)
+    EXPOSE_USER("wsprintfA", pe32_user_wsprintf_a)
+    EXPOSE_USER("wvsprintfA", pe32_user_wvsprintf_a)
     EXPOSE_USER("SetMessageQueue", pe32_user_set_message_queue)
 #undef EXPOSE_USER
 #else

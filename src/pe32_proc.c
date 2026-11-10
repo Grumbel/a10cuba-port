@@ -171,23 +171,125 @@ pe32_u32 PE32_WINAPI pe32_win32_unhandled_exception_filter(void *info)
     return 1; /* EXCEPTION_EXECUTE_HANDLER */
 }
 
+/* Structured exception handling. Guest frames form a linked list rooted at
+ * fs:0; each node is {next, handler}. Handlers use the cdecl signature
+ * (record, frame, context, dispatcher_context). Only the i386 runner has a
+ * guest thread block, so host builds keep the terminate-on-raise behaviour. */
+#define EH_NONCONTINUABLE 0x01u
+#define EH_UNWINDING 0x02u
+#define EH_EXIT_UNWIND 0x04u
+#define STATUS_UNWIND 0xc0000027u
+#define SEH_END 0xffffffffu
+
+struct seh_record {
+    pe32_u32 code, flags, chain, address, count, info[15];
+};
+
+struct seh_frame {
+    pe32_u32 next, handler;
+};
+
+#if defined(__i386__)
+static pe32_u32 seh_head(void)
+{
+    pe32_u32 head;
+    __asm__ volatile("movl %%fs:0, %0" : "=r"(head));
+    return head;
+}
+
+static void seh_set_head(pe32_u32 head)
+{
+    __asm__ volatile("movl %0, %%fs:0" : : "r"(head) : "memory");
+}
+
+typedef int (*seh_handler_fn)(struct seh_record *, void *, void *, void *);
+
+static int seh_call(const struct seh_frame *frame, struct seh_record *record,
+                    void *context)
+{
+    pe32_u32 dispatcher[2] = {0, 0};
+    return ((seh_handler_fn)frame->handler)(record, (void *)frame, context,
+                                            dispatcher);
+}
+#endif
+
 void PE32_WINAPI pe32_win32_raise_exception(pe32_u32 code, pe32_u32 flags,
                                             pe32_u32 count, const void *args)
 {
+#if defined(__i386__)
+    struct seh_record record;
+    pe32_u32 context[179];              /* CONTEXT is 716 bytes on x86 */
+    pe32_u32 frame_address = seh_head(), i;
+    const pe32_u32 *values = args;
+    for (i = 0; i < 179; i++) {
+        context[i] = 0;
+    }
+    record.code = code;
+    record.flags = flags & EH_NONCONTINUABLE;
+    record.chain = 0;
+    record.address = (pe32_u32)__builtin_return_address(0);
+    record.count = count > 15 ? 15 : count;
+    for (i = 0; i < record.count; i++) {
+        record.info[i] = values ? values[i] : 0;
+    }
+    while (frame_address != SEH_END && frame_address) {
+        const struct seh_frame *frame = (const struct seh_frame *)frame_address;
+        int disposition = seh_call(frame, &record, context);
+        if (disposition == 0) {         /* ExceptionContinueExecution */
+            if (record.flags & EH_NONCONTINUABLE) {
+                break;
+            }
+            return;
+        }
+        frame_address = frame->next;
+    }
+#else
     (void)flags;
     (void)count;
     (void)args;
-    /* No SEH dispatch exists yet: an unhandled exception ends the process. */
+#endif
+    /* Unhandled: end the process with the exception code. */
     pe32_win32_exit_process(code);
 }
 
-void PE32_WINAPI pe32_win32_rtl_unwind(void *frame, void *target,
-                                       void *record, pe32_u32 value)
+void PE32_WINAPI pe32_win32_rtl_unwind(void *target, void *target_ip,
+                                       void *record_in, pe32_u32 value)
 {
-    (void)frame;
+#if defined(__i386__)
+    struct seh_record local;
+    struct seh_record *record = record_in;
+    pe32_u32 context[179], i;
+    pe32_u32 frame_address = seh_head();
+    for (i = 0; i < 179; i++) {
+        context[i] = 0;
+    }
+    context[44] = value;                /* CONTEXT.Eax */
+    context[46] = (pe32_u32)target_ip;   /* CONTEXT.Eip */
+    if (!record) {
+        record = &local;
+        local.code = STATUS_UNWIND;
+        local.flags = 0;
+        local.chain = 0;
+        local.address = 0;
+        local.count = 0;
+    }
+    record->flags |= target ? EH_UNWINDING : (EH_UNWINDING | EH_EXIT_UNWIND);
+    while (frame_address != SEH_END && frame_address &&
+           frame_address != (pe32_u32)target) {
+        const struct seh_frame *frame = (const struct seh_frame *)frame_address;
+        seh_call(frame, record, context);
+        frame_address = frame->next;
+        seh_set_head(frame_address);
+    }
+    if (target) {
+        seh_set_head((pe32_u32)target);
+    }
+#else
     (void)target;
-    (void)record;
+    (void)target_ip;
+    (void)record_in;
     (void)value;
+#endif
 }
 
 pe32_u32 PE32_WINAPI pe32_win32_virtual_protect(void *address, pe32_u32 size,

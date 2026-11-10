@@ -25,6 +25,9 @@ pe32_u32 PE32_WINAPI pe32_user_load_handle(pe32_u32 module, pe32_u32 name);
 pe32_u32 PE32_WINAPI pe32_user_load_string_a(pe32_u32 module, pe32_u32 id,
                                              char *buffer, pe32_u32 max);
 pe32_u32 PE32_WINAPI pe32_user_set_message_queue(pe32_u32 size);
+int pe32_user_wsprintf_a(char *out, const char *fmt, ...);
+pe32_u32 PE32_WINAPI pe32_user_wvsprintf_a(char *out, const char *fmt,
+                                           const pe32_u32 *args);
 
 /* Hook procedure registered for a type, or 0 (used by window creation). */
 pe32_u32 pe32_user_hook_proc(pe32_u32 type);

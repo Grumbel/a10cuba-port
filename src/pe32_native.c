@@ -877,6 +877,16 @@ int pe32_main(int argc, char **argv)
             print_error("PE32: cannot install thread block\n");
             return 1;
         }
+        for (i = 1; i < module_count; ++i) {
+            /* DLL_PROCESS_ATTACH: Windows runs this inside LoadLibrary. */
+            if (modules[i].entry_rva) {
+                int (__attribute__((stdcall)) *dll_main)(u32, u32, u32) =
+                    (int (__attribute__((stdcall)) *)(u32, u32, u32))(
+                        modules[i].image + modules[i].entry_rva);
+                print("Attaching DLL...\n");
+                dll_main(modules[i].base, 1, 0);
+            }
+        }
         print("Executing x86 entry point...\n");
         entry_point = (int (*)(void))(modules[0].image + modules[0].entry_rva);
         result = entry_point();
