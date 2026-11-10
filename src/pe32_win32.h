@@ -23,6 +23,9 @@ pe32_u32 PE32_WINAPI pe32_win32_get_module_handle_a(const char *name);
 pe32_u32 PE32_WINAPI pe32_win32_get_proc_address(pe32_u32 handle,
                                                   const char *name_or_ordinal);
 
+/* Registered module for an HMODULE (0 = the main EXE), or NULL. */
+const struct pe32_module *pe32_win32_module_for_handle(pe32_u32 handle);
+
 /* Single-process startup records for early CRT calls. Paths are the supplied
  * PE module paths (not yet translated to a virtual Windows drive). The guest
  * sees an empty, read-only environment; the Linux host environment is never

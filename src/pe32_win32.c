@@ -2,6 +2,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "pe32_win32.h"
+#include "pe32_proc.h"
+#include "pe32_text.h"
+#include "pe32_res.h"
 #include "pe32_heap.h"
 #include "pe32_io.h"
 
@@ -418,6 +421,16 @@ pe32_u32 PE32_WINAPI pe32_win32_get_module_handle_a(const char *name)
     return pe32_win32_load_library_a(name);
 }
 
+const struct pe32_module *pe32_win32_module_for_handle(pe32_u32 handle)
+{
+    if (!registered_count) {
+        return (const struct pe32_module *)0;
+    }
+    return handle ? pe32_find_module_base(registered_modules, registered_count,
+                                          handle)
+                  : &registered_modules[0];
+}
+
 pe32_u32 PE32_WINAPI pe32_win32_get_proc_address(pe32_u32 handle,
                                                   const char *name_or_ordinal)
 {
@@ -507,6 +520,63 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("FindFirstFileA", pe32_win32_find_first_file_a)
     EXPOSE_KERNEL32("FindNextFileA", pe32_win32_find_next_file_a)
     EXPOSE_KERNEL32("FindClose", pe32_win32_find_close)
+    EXPOSE_KERNEL32("GlobalAlloc", pe32_win32_global_alloc)
+    EXPOSE_KERNEL32("GlobalReAlloc", pe32_win32_global_realloc)
+    EXPOSE_KERNEL32("GlobalFree", pe32_win32_global_free)
+    EXPOSE_KERNEL32("GlobalLock", pe32_win32_global_lock)
+    EXPOSE_KERNEL32("GlobalUnlock", pe32_win32_global_unlock)
+    EXPOSE_KERNEL32("GlobalHandle", pe32_win32_global_handle)
+    EXPOSE_KERNEL32("GlobalFlags", pe32_win32_global_flags)
+    EXPOSE_KERNEL32("GlobalMemoryStatus", pe32_win32_global_memory_status)
+    EXPOSE_KERNEL32("LocalAlloc", pe32_win32_global_alloc)
+    EXPOSE_KERNEL32("LocalReAlloc", pe32_win32_global_realloc)
+    EXPOSE_KERNEL32("LocalFree", pe32_win32_global_free)
+    EXPOSE_KERNEL32("ExitProcess", pe32_win32_exit_process)
+    EXPOSE_KERNEL32("TerminateProcess", pe32_win32_terminate_process)
+    EXPOSE_KERNEL32("ExitThread", pe32_win32_exit_thread)
+    EXPOSE_KERNEL32("Sleep", pe32_win32_sleep)
+    EXPOSE_KERNEL32("OutputDebugStringA", pe32_win32_output_debug_string_a)
+    EXPOSE_KERNEL32("SetErrorMode", pe32_win32_set_error_mode)
+    EXPOSE_KERNEL32("SetUnhandledExceptionFilter", pe32_win32_set_unhandled_exception_filter)
+    EXPOSE_KERNEL32("UnhandledExceptionFilter", pe32_win32_unhandled_exception_filter)
+    EXPOSE_KERNEL32("RaiseException", pe32_win32_raise_exception)
+    EXPOSE_KERNEL32("RtlUnwind", pe32_win32_rtl_unwind)
+    EXPOSE_KERNEL32("VirtualProtect", pe32_win32_virtual_protect)
+    EXPOSE_KERNEL32("FreeLibrary", pe32_win32_free_library)
+    EXPOSE_KERNEL32("FlushFileBuffers", pe32_win32_flush_file_buffers)
+    EXPOSE_KERNEL32("CreateEventA", pe32_win32_create_event_a)
+    EXPOSE_KERNEL32("SetEvent", pe32_win32_set_event)
+    EXPOSE_KERNEL32("WaitForSingleObject", pe32_win32_wait_for_single_object)
+    EXPOSE_KERNEL32("CreateThread", pe32_win32_create_thread)
+    EXPOSE_KERNEL32("SuspendThread", pe32_win32_suspend_thread)
+    EXPOSE_KERNEL32("ResumeThread", pe32_win32_resume_thread)
+    EXPOSE_KERNEL32("SetThreadPriority", pe32_win32_set_thread_priority)
+    EXPOSE_KERNEL32("DuplicateHandle", pe32_win32_duplicate_handle)
+    EXPOSE_KERNEL32("lstrcmpA", pe32_win32_lstrcmp_a)
+    EXPOSE_KERNEL32("lstrcmpiA", pe32_win32_lstrcmpi_a)
+    EXPOSE_KERNEL32("MulDiv", pe32_win32_mul_div)
+    EXPOSE_KERNEL32("IsBadReadPtr", pe32_win32_is_bad_read_ptr)
+    EXPOSE_KERNEL32("IsBadWritePtr", pe32_win32_is_bad_write_ptr)
+    EXPOSE_KERNEL32("IsBadCodePtr", pe32_win32_is_bad_code_ptr)
+    EXPOSE_KERNEL32("GetACP", pe32_win32_get_acp)
+    EXPOSE_KERNEL32("GetOEMCP", pe32_win32_get_oemcp)
+    EXPOSE_KERNEL32("GetCPInfo", pe32_win32_get_cp_info)
+    EXPOSE_KERNEL32("GetVersion", pe32_win32_get_version)
+    EXPOSE_KERNEL32("MultiByteToWideChar", pe32_win32_multi_byte_to_wide_char)
+    EXPOSE_KERNEL32("WideCharToMultiByte", pe32_win32_wide_char_to_multi_byte)
+    EXPOSE_KERNEL32("GetStringTypeA", pe32_win32_get_string_type_a)
+    EXPOSE_KERNEL32("GetStringTypeW", pe32_win32_get_string_type_w)
+    EXPOSE_KERNEL32("LCMapStringA", pe32_win32_lc_map_string_a)
+    EXPOSE_KERNEL32("LCMapStringW", pe32_win32_lc_map_string_w)
+    EXPOSE_KERNEL32("CompareStringA", pe32_win32_compare_string_a)
+    EXPOSE_KERNEL32("CompareStringW", pe32_win32_compare_string_w)
+    EXPOSE_KERNEL32("GetLocaleInfoA", pe32_win32_get_locale_info_a)
+    EXPOSE_KERNEL32("GetLocaleInfoW", pe32_win32_get_locale_info_w)
+    EXPOSE_KERNEL32("FindResourceA", pe32_win32_find_resource_a)
+    EXPOSE_KERNEL32("LoadResource", pe32_win32_load_resource)
+    EXPOSE_KERNEL32("LockResource", pe32_win32_lock_resource)
+    EXPOSE_KERNEL32("SizeofResource", pe32_win32_sizeof_resource)
+    EXPOSE_KERNEL32("FreeResource", pe32_win32_free_resource)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

@@ -233,6 +233,21 @@ tests **run natively on the 64-bit host**; the **actual i386 entry execution,
 relocation and imported-function call tests remain skipped**. No original
 A-10 code execution or SDL3 game output is claimed.
 
+## Additional Kernel32 shims (process, text, resources)
+
+- `src/pe32_proc.c`: Global/Local allocation (fixed blocks, handle == pointer),
+  `ExitProcess`/`Sleep` through a host backend, single-thread events,
+  failing `CreateThread`, and no-op exception/`VirtualProtect` stubs.
+- `src/pe32_text.c`: ordinal string compare, code-page 1252/437 (Latin-1)
+  conversion, `GetStringType`, `LCMapString`, `CompareString`, minimal
+  `GetLocaleInfo`, `MulDiv`, and `GetVersion` (Windows 95, `0xC0000004`).
+- `src/pe32_res.c`: `FindResourceA`/`LoadResource`/`LockResource`/
+  `SizeofResource` over the mapped PE resource directory (first language).
+
+Still missing from Kernel32: file-time conversion, time zone, private profile
+strings, atoms, `OpenFile`/`_lclose`/`_llseek`, `LockFile`, volume info,
+`GlobalMemoryStatus` realism and real SEH.
+
 ## Next milestones (in dependency order)
 
 1. **Original binary inventory (basic metadata complete).** Both actual files

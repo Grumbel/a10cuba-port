@@ -6,6 +6,7 @@
  * Linux fds, and allows SetStdHandle to alias them without ownership bugs. */
 
 #include "pe32_io.h"
+#include "pe32_proc.h"
 
 enum {
     ERROR_SUCCESS = 0,
@@ -687,6 +688,12 @@ pe32_u32 PE32_WINAPI pe32_win32_close_handle(pe32_u32 handle)
         return 1;
     }
     slot = file_slot_for_handle(handle);
+    if (slot < 0) {
+        pe32_u32 result;
+        if (pe32_proc_close_handle(handle, &result)) {
+            return result;
+        }
+    }
     if (slot < 0 || !backend_close) {
         pe32_win32_set_last_error(ERROR_INVALID_HANDLE);
         return 0;
