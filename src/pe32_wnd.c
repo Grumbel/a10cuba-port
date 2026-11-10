@@ -43,7 +43,7 @@ struct wnd {
     char text[TEXT_MAX];
     pe32_u32 extra[8];
     struct { char name[24]; pe32_u32 value; } props[MAX_PROPS];
-    int visible, enabled;
+    int visible, enabled, ended;
 };
 
 struct msg {
@@ -337,8 +337,15 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
         }
         if (auto_accept && ++idle > 3 && modal_dialog &&
             lookup(modal_dialog)) {
+            pe32_u32 cmd = 1, k;                /* IDOK */
             idle = 0;
-            pe32_wnd_post(modal_dialog, WM_COMMAND, 1, 0); /* IDOK */
+            for (k = 0; k < 256; k++) {         /* main menu: MAINMISSION */
+                if (windows[k].used && windows[k].parent == modal_dialog &&
+                    windows[k].id == 1136) {    /* main menu has MAINQUIT */
+                    cmd = 3;
+                }
+            }
+            pe32_wnd_post(modal_dialog, WM_COMMAND, cmd, 0);
             continue;
         }
         if (idle_hook) {
@@ -987,8 +994,18 @@ static pe32_u32 PE32_WINAPI user_create_dialog_indirect_param_a(
 static pe32_u32 PE32_WINAPI user_end_dialog(pe32_u32 hwnd, pe32_u32 result)
 {
     (void)result;
+    if (lookup(hwnd)) {
+        lookup(hwnd)->ended = 1;
+    }
     if (hwnd == modal_dialog) {
-        modal_dialog = 0;
+        pe32_u32 k;
+        modal_dialog = 0;               /* fall back to an older live dialog */
+        for (k = 0; k < 256; k++) {
+            if (windows[k].used && !windows[k].ended && HWND_BASE + k != hwnd &&
+                windows[k].cls && windows[k].cls->name[0] == '#') {
+                modal_dialog = HWND_BASE + k;
+            }
+        }
     }
     return 1;
 }
