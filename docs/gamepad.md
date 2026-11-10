@@ -42,7 +42,7 @@ in-memory registry (`src/pe32_sys.c`) seeded from `share/sound-events.txt`
 (via `scripts/gen-sound-events.sh` -> `src/pe32_sound_events.h`) with values
 like `Media\EngineA-10.wav`. Changes made by the game last only for the
 session. When a gamepad is present the `Preferences\\Devices\\Joystick`
-default is 1 (the game ships with it off), so the stick is used at startup.
+is 0 (the id) and `Devices\\Device` is 3 (joystick), so the game polls the stick at startup.
 
 ## Audio
 

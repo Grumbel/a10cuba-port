@@ -170,6 +170,22 @@ static void seed(void)
                       (pe32_u32)str_len(sound_events[i][1]) + 1);
         }
     }
+    /* The game flies with the mouse by default; Device=3 selects the
+     * joystick (found empirically). Select it up front when a gamepad is
+     * present; the Joystick value is the joystick id. */
+    if (pe32_winmm_joystick_present()) {
+        int k;
+        add_key("HKCU\\Software");
+        add_key("HKCU\\Software\\Parsoft");
+        add_key("HKCU\\Software\\Parsoft\\A-10 Cuba");
+        add_key("HKCU\\Software\\Parsoft\\A-10 Cuba\\Preferences");
+        k = add_key("HKCU\\Software\\Parsoft\\A-10 Cuba\\Preferences\\Devices");
+        if (k >= 0) {
+            static const pe32_u8 three[4] = {3, 0, 0, 0}, zero[4] = {0, 0, 0, 0};
+            set_value(k, "Device", 4, three, 4);
+            set_value(k, "Joystick", 4, zero, 4);
+        }
+    }
 }
 
 /* Full path of an open handle or predefined root, or -1. */
@@ -245,20 +261,6 @@ pe32_u32 PE32_WINAPI pe32_win32_reg_query_value_ex_a(
             }
             return ERROR_SUCCESS;
         }
-    }
-    /* The game ships with "Joystick" off; enable it when a gamepad exists. */
-    if (name && str_ieq(name, "Joystick") && pe32_winmm_joystick_present() &&
-        str_ieq(keys[k].path, "HKCU\\Software\\Parsoft\\A-10 Cuba\\Preferences\\Devices")) {
-        if (type) {
-            *type = 4;
-        }
-        if (data && size && *size >= 4) {
-            data[0] = 1; data[1] = data[2] = data[3] = 0;
-        }
-        if (size) {
-            *size = 4;
-        }
-        return ERROR_SUCCESS;
     }
     return ERROR_FILE_NOT_FOUND;
 }
