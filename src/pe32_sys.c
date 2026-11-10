@@ -3,30 +3,248 @@
 
 #include "pe32_sys.h"
 
+#include "pe32_sound_events.h"
+
 enum {
     ERROR_SUCCESS = 0,
     ERROR_FILE_NOT_FOUND = 2,
+    ERROR_MORE_DATA = 234,
     REG_CREATED_NEW_KEY = 1,
-    KEY_HANDLE = 0x5000
+    REG_OPENED_EXISTING_KEY = 2,
+    KEY_HANDLE_BASE = 0x5000,
+    MAX_KEYS = 160,
+    MAX_VALUES = 256,
+    PATH_MAX_LEN = 200,
+    NAME_MAX_LEN = 48,
+    DATA_MAX_LEN = 128
 };
+
+struct reg_key {
+    char path[PATH_MAX_LEN];
+};
+
+struct reg_value {
+    int key;
+    char name[NAME_MAX_LEN];
+    pe32_u32 type;
+    pe32_u32 size;
+    pe32_u8 data[DATA_MAX_LEN];
+};
+
+static struct reg_key keys[MAX_KEYS];
+static int key_count;
+static struct reg_value values[MAX_VALUES];
+static int value_count;
+static int seeded;
+
+static unsigned lower(unsigned c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+static int str_ieq(const char *a, const char *b)
+{
+    while (*a && lower((unsigned char)*a) == lower((unsigned char)*b)) {
+        a++;
+        b++;
+    }
+    return !*a && !*b;
+}
+
+static int str_len(const char *s)
+{
+    int n = 0;
+    while (s[n]) {
+        n++;
+    }
+    return n;
+}
+
+/* Append sub to path ("\" separated), trimming stray separators. */
+static int build_path(char *out, const char *base, const char *sub)
+{
+    int n = 0, i;
+    for (i = 0; base[i] && n < PATH_MAX_LEN - 1; i++) {
+        out[n++] = base[i];
+    }
+    if (sub && *sub) {
+        if (n && out[n - 1] != '\\' && n < PATH_MAX_LEN - 1) {
+            out[n++] = '\\';
+        }
+        for (i = 0; sub[i] && n < PATH_MAX_LEN - 1; i++) {
+            out[n++] = sub[i];
+        }
+    }
+    while (n && out[n - 1] == '\\') {
+        n--;
+    }
+    out[n] = 0;
+    return n;
+}
+
+static const char *root_name(pe32_u32 key)
+{
+    switch (key) {
+    case 0x80000000u: return "HKCR";
+    case 0x80000001u: return "HKCU";
+    case 0x80000002u: return "HKLM";
+    case 0x80000003u: return "HKU";
+    case 0x80000005u: return "HKCC";
+    default: return 0;
+    }
+}
+
+static int find_key(const char *path)
+{
+    int i;
+    for (i = 0; i < key_count; i++) {
+        if (str_ieq(keys[i].path, path)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int add_key(const char *path)
+{
+    int i = find_key(path);
+    if (i >= 0) {
+        return i;
+    }
+    if (key_count >= MAX_KEYS) {
+        return -1;
+    }
+    build_path(keys[key_count].path, path, 0);
+    return key_count++;
+}
+
+static int set_value(int key, const char *name, pe32_u32 type,
+                     const pe32_u8 *data, pe32_u32 size)
+{
+    int i;
+    pe32_u32 j;
+    if (size > DATA_MAX_LEN || str_len(name) >= NAME_MAX_LEN) {
+        return 0;
+    }
+    for (i = 0; i < value_count; i++) {
+        if (values[i].key == key && str_ieq(values[i].name, name)) {
+            break;
+        }
+    }
+    if (i == value_count) {
+        if (value_count >= MAX_VALUES) {
+            return 0;
+        }
+        value_count++;
+        values[i].key = key;
+        for (j = 0; (values[i].name[j] = name[j]) != 0; j++) {
+        }
+    }
+    values[i].type = type;
+    values[i].size = size;
+    for (j = 0; j < size; j++) {
+        values[i].data[j] = data[j];
+    }
+    return 1;
+}
+
+/* Seed HKCU\AppEvents\Schemes\Apps\A10Cuba\<event>\.Current (REG_SZ) so the
+ * game finds its sound files without a Windows registry. */
+static void seed(void)
+{
+    unsigned i;
+    char path[PATH_MAX_LEN];
+    if (seeded) {
+        return;
+    }
+    seeded = 1;
+    for (i = 0; i < sizeof(sound_events) / sizeof(sound_events[0]); i++) {
+        int k;
+        build_path(path, "HKCU\\AppEvents\\Schemes\\Apps\\A10Cuba",
+                   sound_events[i][0]);
+        k = add_key(path);
+        if (k >= 0) {
+            build_path(path, keys[k].path, ".Current");
+            k = add_key(path);
+        }
+        if (k >= 0) {
+            set_value(k, "", 1, (const pe32_u8 *)sound_events[i][1],
+                      (pe32_u32)str_len(sound_events[i][1]) + 1);
+        }
+    }
+}
+
+/* Full path of an open handle or predefined root, or -1. */
+static int handle_path(pe32_u32 key, char *out)
+{
+    const char *root = root_name(key);
+    if (root) {
+        build_path(out, root, 0);
+        return 1;
+    }
+    if (key >= KEY_HANDLE_BASE && key < KEY_HANDLE_BASE + MAX_KEYS &&
+        (int)(key - KEY_HANDLE_BASE) < key_count) {
+        build_path(out, keys[key - KEY_HANDLE_BASE].path, 0);
+        return 1;
+    }
+    return 0;
+}
 
 pe32_u32 PE32_WINAPI pe32_win32_reg_open_key_ex_a(pe32_u32 key, const char *sub,
                                                   pe32_u32 options,
                                                   pe32_u32 access,
                                                   pe32_u32 *result)
 {
-    (void)key; (void)sub; (void)options; (void)access;
+    char base[PATH_MAX_LEN], path[PATH_MAX_LEN];
+    int k;
+    (void)options; (void)access;
+    seed();
     if (result) {
         *result = 0;
     }
-    return ERROR_FILE_NOT_FOUND;
+    if (!handle_path(key, base)) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    build_path(path, base, sub);
+    k = find_key(path);
+    if (k < 0) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    if (result) {
+        *result = KEY_HANDLE_BASE + (pe32_u32)k;
+    }
+    return ERROR_SUCCESS;
 }
 
 pe32_u32 PE32_WINAPI pe32_win32_reg_query_value_ex_a(
     pe32_u32 key, const char *name, pe32_u32 *reserved, pe32_u32 *type,
     pe32_u8 *data, pe32_u32 *size)
 {
-    (void)key; (void)name; (void)reserved; (void)type; (void)data; (void)size;
+    char base[PATH_MAX_LEN];
+    int k, i;
+    (void)reserved;
+    seed();
+    if (!handle_path(key, base) || (k = find_key(base)) < 0) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    for (i = 0; i < value_count; i++) {
+        if (values[i].key == k && str_ieq(values[i].name, name ? name : "")) {
+            pe32_u32 j;
+            if (type) {
+                *type = values[i].type;
+            }
+            if (data && size) {
+                if (*size < values[i].size) {
+                    *size = values[i].size;
+                    return ERROR_MORE_DATA;
+                }
+                for (j = 0; j < values[i].size; j++) {
+                    data[j] = values[i].data[j];
+                }
+            }
+            if (size) {
+                *size = values[i].size;
+            }
+            return ERROR_SUCCESS;
+        }
+    }
     return ERROR_FILE_NOT_FOUND;
 }
 
@@ -35,13 +253,24 @@ pe32_u32 PE32_WINAPI pe32_win32_reg_create_key_ex_a(
     pe32_u32 options, pe32_u32 access, void *security, pe32_u32 *result,
     pe32_u32 *disposition)
 {
-    (void)key; (void)sub; (void)reserved; (void)cls; (void)options;
-    (void)access; (void)security;
+    char base[PATH_MAX_LEN], path[PATH_MAX_LEN];
+    int k, existed;
+    (void)reserved; (void)cls; (void)options; (void)access; (void)security;
+    seed();
+    if (!handle_path(key, base)) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    build_path(path, base, sub);
+    existed = find_key(path) >= 0;
+    k = add_key(path);
+    if (k < 0) {
+        return ERROR_FILE_NOT_FOUND;
+    }
     if (result) {
-        *result = KEY_HANDLE;
+        *result = KEY_HANDLE_BASE + (pe32_u32)k;
     }
     if (disposition) {
-        *disposition = REG_CREATED_NEW_KEY;
+        *disposition = existed ? REG_OPENED_EXISTING_KEY : REG_CREATED_NEW_KEY;
     }
     return ERROR_SUCCESS;
 }
@@ -49,18 +278,22 @@ pe32_u32 PE32_WINAPI pe32_win32_reg_create_key_ex_a(
 pe32_u32 PE32_WINAPI pe32_win32_reg_create_key_a(pe32_u32 key, const char *sub,
                                                  pe32_u32 *result)
 {
-    (void)key; (void)sub;
-    if (result) {
-        *result = KEY_HANDLE;
-    }
-    return ERROR_SUCCESS;
+    return pe32_win32_reg_create_key_ex_a(key, sub, 0, 0, 0, 0, 0, result, 0);
 }
 
 pe32_u32 PE32_WINAPI pe32_win32_reg_set_value_ex_a(
     pe32_u32 key, const char *name, pe32_u32 reserved, pe32_u32 type,
     const pe32_u8 *data, pe32_u32 size)
 {
-    (void)key; (void)name; (void)reserved; (void)type; (void)data; (void)size;
+    char base[PATH_MAX_LEN];
+    int k;
+    (void)reserved;
+    seed();
+    if (!handle_path(key, base) || (k = find_key(base)) < 0) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    /* Oversized values are dropped; the game then falls back to defaults. */
+    set_value(k, name ? name : "", type, data, size);
     return ERROR_SUCCESS;
 }
 

@@ -6,9 +6,10 @@
 
 #include "pe32_win32.h"
 
-/* Inert ADVAPI32 (registry), COMDLG32 and SHELL32 subsets. The registry has
- * no stored keys: opens and queries report "not found" so the game falls back
- * to defaults, while creates and sets succeed and are discarded. File dialogs
+/* ADVAPI32 (registry), COMDLG32 and SHELL32 subsets. The registry is an
+ * in-memory, session-only store seeded with the game's sound-event scheme
+ * (HKCU\AppEvents\Schemes\Apps\A10Cuba); unknown keys report "not found" so
+ * the game uses defaults. File dialogs
  * report "cancelled" and drag-and-drop reports no files. */
 pe32_u32 PE32_WINAPI pe32_win32_reg_open_key_ex_a(pe32_u32 key, const char *sub,
                                                   pe32_u32 options,
