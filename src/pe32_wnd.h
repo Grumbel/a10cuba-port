@@ -19,6 +19,10 @@ void pe32_wnd_set_idle(pe32_wnd_idle_fn idle);
 int pe32_wnd_post(pe32_u32 hwnd, pe32_u32 msg, pe32_u32 wparam,
                   pe32_u32 lparam);
 
+/* Window that should receive keyboard/mouse input (focus, else active), 0 if
+ * none exists yet. */
+pe32_u32 pe32_wnd_input_target(void);
+
 /* When set, a blocked GetMessage with nothing pending clicks the default
  * button (IDOK) of the active dialog, so unattended runs progress. */
 void pe32_wnd_set_auto_accept(int enable);

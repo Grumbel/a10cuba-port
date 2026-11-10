@@ -3,6 +3,7 @@
 
 #include "pe32_user.h"
 #include "pe32_winmm.h"
+#include "pe32_wnd.h"
 #include "pe32_res.h"
 
 enum { HOOK_TYPES = 16, HOOK_BASE = 0x00a10000, MESSAGE_BASE = 0xc000 };
@@ -130,15 +131,60 @@ void pe32_user_poll_input(void)
     }
 }
 
+/* Printable character for a key press, 0 if none (WM_CHAR is then skipped). */
+static pe32_u32 key_char(pe32_u32 vk)
+{
+    int shift = key_down[0x10];
+    if (vk >= 'A' && vk <= 'Z') {
+        return shift ? vk : vk + 32;
+    }
+    if ((vk >= '0' && vk <= '9') || vk == 0x20) {
+        return vk;
+    }
+    if (vk == 0x0d || vk == 0x08 || vk == 0x09 || vk == 0x1b) {
+        return vk;
+    }
+    return 0;
+}
+
+static pe32_u32 mouse_lparam(void)
+{
+    return ((pe32_u32)cursor_y << 16) | ((pe32_u32)cursor_x & 0xffffu);
+}
+
 void pe32_user_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b)
 {
+    pe32_u32 target = pe32_wnd_input_target();
     if (type == PE32_INPUT_KEY && a < 256) {
+        int was_down = key_down[a];
         key_down[a] = b != 0;
+        if (target) {
+            if (b) {
+                /* Bit 30 marks auto-repeat; the host sends one event per press. */
+                pe32_wnd_post(target, 0x100, a, 1u | (was_down ? 1u << 30 : 0));
+                if (key_char(a)) {
+                    pe32_wnd_post(target, 0x102, key_char(a), 1);
+                }
+            } else {
+                pe32_wnd_post(target, 0x101, a, 1u | (3u << 30));
+            }
+        }
     } else if (type == PE32_INPUT_MOVE) {
         cursor_x = (int)a;
         cursor_y = (int)b;
+        if (target) {
+            pe32_wnd_post(target, 0x200, (key_down[1] ? 1u : 0) |
+                          (key_down[2] ? 2u : 0), mouse_lparam());
+        }
     } else if (type == PE32_INPUT_BUTTON && a < 256) {
         key_down[a] = b != 0;           /* VK_LBUTTON, VK_RBUTTON, VK_MBUTTON */
+        if (target && (a == 1 || a == 2 || a == 4)) {
+            /* WM_xBUTTONDOWN = 0x201 + 3*(button index), UP = DOWN + 1. */
+            pe32_u32 base = a == 1 ? 0x201 : a == 2 ? 0x204 : 0x207;
+            pe32_wnd_post(target, base + (b ? 0 : 1),
+                          (key_down[1] ? 1u : 0) | (key_down[2] ? 2u : 0),
+                          mouse_lparam());
+        }
     } else if (type >= PE32_WINMM_AXIS && type <= PE32_WINMM_PRESENT) {
         pe32_winmm_input_event(type, a, b);
     }

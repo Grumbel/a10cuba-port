@@ -815,6 +815,8 @@ static pe32_u32 PE32_WINAPI user_set_focus(pe32_u32 hwnd)
     return old;
 }
 
+pe32_u32 pe32_wnd_input_target(void) { return focus ? focus : active; }
+
 static pe32_u32 PE32_WINAPI user_get_focus(void) { return focus; }
 
 static pe32_u32 PE32_WINAPI user_set_active_window(pe32_u32 hwnd)
