@@ -374,6 +374,7 @@ static void pause_dialog_poll(void)
     pe32_u32 hdlg = modal_dialog;
     int r;
     if (!ui_hook || !hdlg || hdlg == pause_handled || !lookup(hdlg) ||
+        !lookup(hdlg)->visible ||
         !dialog_has_id(hdlg, 1055) || !dialog_has_id(hdlg, 1020) ||
         !dialog_has_id(hdlg, 1)) {
         return;
@@ -382,6 +383,8 @@ static void pause_dialog_poll(void)
     r = ui_hook(3, mission_pick >= 0 ? mission_pick : 0);
     if (r == 1) {
         dialog_activate(hdlg, 1, 0);
+        lookup(hdlg)->visible = 0;      /* resumed: keys go back to the game */
+        pause_handled = 0;
     } else if (r == 1020 || r == 1055) {
         pe32_wnd_post(hdlg, WM_COMMAND, (pe32_u32)r, 0);
         if (r == 1020) {
@@ -1198,7 +1201,11 @@ void pe32_wnd_set_game_window(pe32_u32 hwnd)
 
 pe32_u32 pe32_wnd_input_target(void)
 {
-    if (modal_dialog && lookup(modal_dialog)) {
+    /* Only the in-flight map dialog takes keys from the cockpit: the other
+     * dialogs are driven natively and may stay alive (and "modal") behind
+     * the running game. */
+    if (modal_dialog && lookup(modal_dialog) && lookup(modal_dialog)->visible &&
+        !lookup(modal_dialog)->ended && dialog_has_id(modal_dialog, 1055)) {
         return modal_dialog;
     }
     if (game_window && lookup(game_window)) {
