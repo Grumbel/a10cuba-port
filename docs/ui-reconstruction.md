@@ -78,3 +78,17 @@ runner/host protocol.
   mission list's `LB_GETCURSEL`.
 - Not verified: that the sim really uses the chosen loadout in flight; fuel is
   shown but not editable, LOAD/SAVE and quantities are not implemented.
+
+**In-flight Esc map** (dialog 186; 219 pause/score, 224 map only): not
+reconstructed yet. Findings so far:
+
+- Esc in flight makes the game create dialog 186 (controls 1020 MAPRELOAD,
+  1055 ENDMISSION, 1 MAPOK, static 1120) and stop producing frames. It never
+  calls GetMessage afterwards; it spins in its own PeekMessage loop.
+- Posting WM_COMMAND (IDOK, IDCANCEL, with and without the control handle) and
+  synthetic left clicks to that dialog from the PeekMessage idle path reaches
+  the dialog procedure, but it neither calls EndDialog nor resumes the sim. The
+  loop probably waits on something else (state or an API not yet traced).
+- Unattended runs therefore stall after Esc; the mission map screen needs this
+  loop understood first (a working debugger session for the i386 runner would
+  help).
