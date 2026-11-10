@@ -5,6 +5,8 @@
 #include "pe32_proc.h"
 #include "pe32_text.h"
 #include "pe32_res.h"
+#include "pe32_misc.h"
+#include "pe32_winmm.h"
 #include "pe32_heap.h"
 #include "pe32_io.h"
 
@@ -460,7 +462,13 @@ enum pe32_link_status pe32_win32_resolve_import(
         *address = 0;
     }
 #if defined(__i386__)
-    if (!equal_ascii_ci(dll, "KERNEL32.dll") || !name || !address) {
+    if (!name || !address) {
+        return PE32_LINK_MISSING;
+    }
+    if (equal_ascii_ci(dll, "WINMM.dll")) {
+        return pe32_winmm_resolve(name, address);
+    }
+    if (!equal_ascii_ci(dll, "KERNEL32.dll")) {
         return PE32_LINK_MISSING;
     }
 #define EXPOSE_KERNEL32(legacy_name, implementation) \
@@ -577,6 +585,24 @@ enum pe32_link_status pe32_win32_resolve_import(
     EXPOSE_KERNEL32("LockResource", pe32_win32_lock_resource)
     EXPOSE_KERNEL32("SizeofResource", pe32_win32_sizeof_resource)
     EXPOSE_KERNEL32("FreeResource", pe32_win32_free_resource)
+    EXPOSE_KERNEL32("FileTimeToLocalFileTime", pe32_win32_file_time_to_local_file_time)
+    EXPOSE_KERNEL32("FileTimeToSystemTime", pe32_win32_file_time_to_system_time)
+    EXPOSE_KERNEL32("GetTimeZoneInformation", pe32_win32_get_time_zone_information)
+    EXPOSE_KERNEL32("OpenFile", pe32_win32_open_file)
+    EXPOSE_KERNEL32("_lclose", pe32_win32__lclose)
+    EXPOSE_KERNEL32("_llseek", pe32_win32__llseek)
+    EXPOSE_KERNEL32("GlobalAddAtomA", pe32_win32_global_add_atom_a)
+    EXPOSE_KERNEL32("GlobalDeleteAtom", pe32_win32_global_delete_atom)
+    EXPOSE_KERNEL32("GlobalGetAtomNameA", pe32_win32_global_get_atom_name_a)
+    EXPOSE_KERNEL32("WritePrivateProfileStringA", pe32_win32_write_private_profile_string_a)
+    EXPOSE_KERNEL32("SetEnvironmentVariableA", pe32_win32_set_environment_variable_a)
+    EXPOSE_KERNEL32("GetProcessVersion", pe32_win32_get_process_version)
+    EXPOSE_KERNEL32("WinExec", pe32_win32_win_exec)
+    EXPOSE_KERNEL32("GetVolumeInformationA", pe32_win32_get_volume_information_a)
+    EXPOSE_KERNEL32("LockFile", pe32_win32_lock_file)
+    EXPOSE_KERNEL32("UnlockFile", pe32_win32_lock_file)
+    EXPOSE_KERNEL32("SetEndOfFile", pe32_win32_set_end_of_file)
+    EXPOSE_KERNEL32("PeekNamedPipe", pe32_win32_peek_named_pipe)
 #undef EXPOSE_KERNEL32
     return PE32_LINK_MISSING;
 #else

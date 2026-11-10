@@ -16,6 +16,7 @@
 #include "pe32_win32.h"
 #include "pe32_heap.h"
 #include "pe32_proc.h"
+#include "pe32_winmm.h"
 #include "pe32_io.h"
 
 typedef unsigned char u8;
@@ -27,7 +28,7 @@ static u32 read32(const u8 *data);
 
 enum {
     SYS_READ = 3, SYS_WRITE = 4, SYS_OPEN = 5,
-    SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90, SYS_NANOSLEEP = 162, SYS_EXIT_GROUP = 252,
+    SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90, SYS_NANOSLEEP = 162, SYS_CLOCK_GETTIME = 265, SYS_EXIT_GROUP = 252,
     SYS_MUNMAP = 91, SYS_LLSEEK = 140, SYS_FSTAT64 = 197,
     SYS_OPENAT = 295, SYS_GETDENTS64 = 220,
     O_DIRECTORY = 00200000, O_NOFOLLOW = 00400000,
@@ -110,6 +111,15 @@ static void sleep_milliseconds(u32 milliseconds)
 {
     u32 request[2] = { milliseconds / 1000, (milliseconds % 1000) * 1000000u };
     (void)syscall2(SYS_NANOSLEEP, (u32)request, 0);
+}
+
+static u32 monotonic_milliseconds(void)
+{
+    u32 ts[2]; /* i386 timespec: 32-bit seconds and nanoseconds */
+    if (syscall2(SYS_CLOCK_GETTIME, 1, (u32)ts) < 0) {
+        return 0;
+    }
+    return ts[0] * 1000u + ts[1] / 1000000u;
 }
 
 static s32 read_standard_fd(u32 fd, void *buffer, u32 count)
@@ -697,6 +707,7 @@ int pe32_main(int argc, char **argv)
     struct pe32_module modules[2] = { {0}, {0} };
     int module_count = 0, link = 0, execute = 0, i;
     pe32_heap_set_backend(map_heap_pages, unmap_heap_pages);
+    pe32_winmm_set_clock(monotonic_milliseconds);
     pe32_proc_set_backend(exit_process, sleep_milliseconds);
     pe32_io_set_backend(read_standard_fd, write_standard_fd, type_standard_fd);
     pe32_io_set_file_backend(open_game_read, close_game_fd,

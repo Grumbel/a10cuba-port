@@ -244,9 +244,17 @@ A-10 code execution or SDL3 game output is claimed.
 - `src/pe32_res.c`: `FindResourceA`/`LoadResource`/`LockResource`/
   `SizeofResource` over the mapped PE resource directory (first language).
 
-Still missing from Kernel32: file-time conversion, time zone, private profile
-strings, atoms, `OpenFile`/`_lclose`/`_llseek`, `LockFile`, volume info,
-`GlobalMemoryStatus` realism and real SEH.
+- `src/pe32_misc.c`: UTC-only `FileTimeToSystemTime`/`FileTimeToLocalFileTime`/
+  `GetTimeZoneInformation` (shift-subtract 64-bit division, no libgcc), read-
+  only `OpenFile`/`_lclose`/`_llseek`, global atoms, discarded
+  `WritePrivateProfileStringA`, volume info and lock/EOF stubs.
+- `src/pe32_winmm.c`: all five WINMM imports (`timeGetTime` via
+  `clock_gettime`; joysticks report unplugged; `PlaySoundA` is silent).
+
+Every KERNEL32 import of the EXE and DLL is now implemented, except real SEH
+(`RaiseException`/`RtlUnwind` are stubs). The first unresolved import in
+`--link` is now `comdlg32.dll!GetOpenFileNameA`; USER32 (130), GDI32 (45),
+ADVAPI32, COMCTL32, CTL3D32, SHELL32, WINSPOOL, DDRAW, DSOUND and DPLAY remain.
 
 ## Next milestones (in dependency order)
 
