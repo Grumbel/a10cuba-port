@@ -1,14 +1,14 @@
 # A-10 Cuba! Linux port
 
-This project is an initial investigation toward a native Linux port. The original game binaries are 32-bit x86 Windows PE files; a native port requires substantial reverse engineering and replacement of Windows APIs. There is no runnable Linux port yet.
+This project brings A-10 Cuba! to Linux. The game already runs under Wine through an isolated launcher; a fully native port is a longer-term goal. The original game binaries are 32-bit x86 Windows PE files, so going native requires substantial reverse engineering and replacement of Windows APIs.
 
 ## Status
 
-There is **no native Linux port yet**. What exists is a reference run under Wine, reverse-engineering tooling and notes, and an early native-loader bootstrap.
+**The game runs on Linux.** The original Windows game plays fine under Wine through the isolated launcher (`nix run .#a10cuba-wine`). The port work is in the surrounding pieces, which are still incomplete and not much tested: the launcher and UI around the game, and the sound, gamepad and display handling. A fully native build (no Wine) is a longer-term goal and does not exist yet.
 
 **Works**
 
-- Running the original game under Wine through an isolated launcher (`nix run .#a10cuba-wine`); see [launcher notes](docs/launcher.md) and [Wine baseline](docs/wine-baseline.md).
+- Playing the original game under Wine via the launcher; see [launcher notes](docs/launcher.md) and [Wine baseline](docs/wine-baseline.md).
 - Extracting your own disc image into ignored local data (`scripts/extract-disc.sh`).
 - Inspecting PE resources and imports (`tools/pe_resources.py`, `tools/pe32_imports.py`).
 - Mapping the EXE and simulation DLL with the freestanding i386 loader (inspection only).
@@ -16,13 +16,13 @@ There is **no native Linux port yet**. What exists is a reference run under Wine
 - Reading the mission databases (`Missions/*.db`) with `tools/a10db.py`: scene tree, unit placement, per-unit property/loadout tokens and path waypoint scripts. The format is documented in [docs/mission-format.md](docs/mission-format.md); `.lod` loadouts are in [docs/ui-reconstruction.md](docs/ui-reconstruction.md).
 - Unit tests for the Python tools and launcher (`python3 -m unittest discover -s tests -v`). They use synthetic data, not game files.
 
-**Does not work / not done**
+**Incomplete or untested**
 
-- The original game does not run natively: most Windows imports are unresolved, Windows exception handling, threads, DirectDraw, DirectSound and DirectPlay are not implemented, and `--link` is expected to fail.
-- The SDL3 probe is not the game and does not implement the DirectDraw interface.
-- Mission format is only partly understood: position units and axes, the mission-to-`missN` mapping, the footer, vertex scaling and several tokens (`side`, `targets`, `vrandom`, `token`) are unconfirmed; the `.dmo`/`.rec` demo formats are unanalysed. See "Open items" in [docs/mission-format.md](docs/mission-format.md).
-- There is no mission editor, and no writer/repacker for `.db` files yet; a byte-identical round trip must be shown before any editing.
-- Wine is x86-64 Linux only, needs a graphical display, and the game's behaviour under it has not been exhaustively tested.
+- The launcher and surrounding UI are unfinished and have had little testing beyond basic runs.
+- Wine support is x86-64 Linux only and needs a graphical display.
+- Native execution without Wine is not there: most Windows imports are unresolved, so the native loader only inspects the binaries and `--link` is expected to fail. The SDL3 probe is not the game.
+- The mission format is only partly understood (position units and axes, mission-to-`missN` mapping, footer, vertex scaling, some tokens; `.dmo`/`.rec` unanalysed). See "Open items" in [docs/mission-format.md](docs/mission-format.md).
+- There is no mission editor and no `.db` writer yet.
 
 ## Reference material
 
