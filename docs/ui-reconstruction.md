@@ -79,16 +79,30 @@ runner/host protocol.
 - Not verified: that the sim really uses the chosen loadout in flight; fuel is
   shown but not editable, LOAD/SAVE and quantities are not implemented.
 
-**In-flight Esc map** (dialog 186; 219 pause/score, 224 map only): not
-reconstructed yet. Findings so far:
+**In-flight Esc map** (dialog 186, `ui_pause_map_screen`, screen id 3):
+native screen with the `144` frame, the `MISMAP<n>` bitmap and the
+MAPRELOAD / ENDMISSION / MAPOK (Resume) buttons. Keys: Left/Right switch the
+button, Space presses it (action on release), Enter acts at once, Esc asks to
+end the mission; a native Yes/No box (the text is string 6000) guards End
+Mission. Dragging on the map shows the compass heading; no distance because
+the map scale is unknown.
 
-- Esc in flight makes the game create dialog 186 (controls 1020 MAPRELOAD,
-  1055 ENDMISSION, 1 MAPOK, static 1120) and stop producing frames. It never
-  calls GetMessage afterwards; it spins in its own PeekMessage loop.
-- Posting WM_COMMAND (IDOK, IDCANCEL, with and without the control handle) and
-  synthetic left clicks to that dialog from the PeekMessage idle path reaches
-  the dialog procedure, but it neither calls EndDialog nor resumes the sim. The
-  loop probably waits on something else (state or an API not yet traced).
-- Unattended runs therefore stall after Esc; the mission map screen needs this
-  loop understood first (a working debugger session for the i386 runner would
-  help).
+How it is wired:
+
+- Esc makes the game create modeless dialog 186 and run its own PeekMessage
+  loop (no frames, no GetMessage). `pause_dialog_poll` in `pe32_wnd.c` asks the
+  host for screen 3 from that loop and translates the answer.
+- The game's own Resume (`OnOK`, 0x40fca0) compares `FromHandle(GetFocus())`
+  with its button members, which this emulation never attaches (no
+  `GetDlgItem`/`SetWindowLong` calls happen in `WM_INITDIALOG`). Resume is
+  therefore done by calling the game's routine 0x419cd0 (this = the global at
+  0x45da40, argument 1) directly. Reload and End Mission post `WM_COMMAND`
+  with 1020 / 1055, which the game handles normally.
+- `IsDialogMessageA` is implemented for the original dialogs (arrows/Tab move
+  focus, Space and Enter activate, Esc cancels) and `PeekMessage` now polls
+  input, so the keyboard works there too.
+- After End Mission the main menu is shown again and driven by the launcher
+  (it is still auto-driven). Starting a second mission in the same process
+  crashes inside A10Sim.dll (0x1000e380 reads an unset object table), so that
+  path is not usable yet.
+- Dialog 219 (pause/score, RESUME 1087) is not handled natively yet.

@@ -366,6 +366,8 @@ static void dialog_activate(pe32_u32 hdlg, pe32_u32 id, pe32_u32 ctl)
 /* The in-flight map (Esc) is a modeless dialog; show the native map for it
  * once and turn the answer into the dialog's own command. */
 static pe32_u32 pause_handled;
+static int peek_idle;
+static pe32_u32 menu_driven;
 
 static void pause_dialog_poll(void)
 {
@@ -384,9 +386,13 @@ static void pause_dialog_poll(void)
         pe32_wnd_post(hdlg, WM_COMMAND, (pe32_u32)r, 0);
         if (r == 1020) {
             pause_handled = 0;          /* back to the map after a reload */
+        } else {
+            menu_driven = 0;            /* the menu returns once the mission ends */
         }
     }
 }
+
+static void drive_dialog(void);
 
 static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
                                                 pe32_u32 min, pe32_u32 max,
@@ -397,6 +403,25 @@ static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
     if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
         /* Loops built on PeekMessage never call GetMessage. */
         pause_dialog_poll();
+        /* The main menu shown after a mission ends is driven from this loop. */
+        if (auto_accept && ++peek_idle > 3) {
+            pe32_u32 k, menu = 0;
+            peek_idle = 0;
+            for (k = 0; k < MAX_WINDOWS; k++) {
+                if (windows[k].used && !windows[k].ended && windows[k].visible &&
+                    windows[k].cls && windows[k].cls->name[0] == '#' &&
+                    dialog_has_id(HWND_BASE + k, 1136)) {
+                    menu = HWND_BASE + k;
+                }
+            }
+            if (menu != menu_driven) {  /* once per menu, not while it waits */
+                menu_driven = menu;
+                if (menu) {
+                    modal_dialog = menu;
+                    drive_dialog();
+                }
+            }
+        }
         pe32_user_poll_input();
         if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
             return 0;
@@ -404,6 +429,67 @@ static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
     }
     store_msg(dst, &m);
     return 1;
+}
+
+/* Answer the live dialog the way the launcher wants: the native screens
+ * for the mission list and weapons, otherwise the default button. */
+static void drive_dialog(void)
+{
+    pe32_u32 cmd = 1, k;                /* IDOK */
+    if (dialog_has_id(modal_dialog, 1055)) {
+        return;                         /* the in-flight map has its own screen */
+    }
+    if (dialog_has_id(modal_dialog, 1136)) {
+        menu_driven = modal_dialog;     /* the Peek loop must not answer it again */
+    }
+    for (k = 0; k < 256; k++) {         /* main menu: MAINMISSION */
+        if (windows[k].used && windows[k].parent == modal_dialog &&
+            windows[k].id == 1136) {    /* main menu has MAINQUIT */
+            cmd = 3;
+        }
+    }
+    for (k = 0; k < 256; k++) {         /* mission list: native screen */
+        if (ui_hook && mission_choice < 0 && windows[k].used &&
+            windows[k].parent == modal_dialog && windows[k].id == 1057) {
+            int r = ui_hook(1, mission_pick >= 0 ? mission_pick : 0);
+            if (r >= 0x100) {           /* WEAPONS: open that dialog */
+                mission_pick = r & 0xff;
+                cmd = 1057;
+            } else if (r >= 0) {
+                mission_pick = r;
+            } else if (r == -1) {
+                cmd = 2;                /* IDCANCEL: back to the menu */
+            }
+            break;
+        }
+    }
+    for (k = 0; k < 256; k++) {         /* weapons loadout: native screen */
+        if (ui_hook && mission_choice < 0 && windows[k].used &&
+            windows[k].parent == modal_dialog && windows[k].id == 1025) {
+            int r = ui_hook(2, mission_pick >= 0 ? mission_pick : 0);
+            if (r == -1) {
+                cmd = 2;                /* IDCANCEL: keep the loadout */
+            }
+            break;
+        }
+    }
+    if (mission_choice >= 0) {          /* mission list: pick one */
+        for (k = 0; k < 256; k++) {
+            pe32_u32 lb = HWND_BASE + (pe32_u32)k;
+            if (windows[k].used && windows[k].parent == modal_dialog &&
+                windows[k].cls && str_eq_ci(windows[k].cls->name, "LISTBOX") &&
+                pe32_wnd_listbox_count(lb) > 0) {
+                int count = pe32_wnd_listbox_count(lb);
+                int pick = mission_choice < count ? mission_choice : count - 1;
+                pe32_wnd_listbox_select(lb, pick);
+                /* LBN_SELCHANGE so the dialog updates its details. */
+                pe32_wnd_post(modal_dialog, WM_COMMAND,
+                              (1u << 16) | windows[k].id, lb);
+                mission_choice = -1;
+            }
+        }
+    }
+    pe32_wnd_post(modal_dialog, WM_COMMAND, cmd, 0);
 }
 
 static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
@@ -419,56 +505,8 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
         }
         if (auto_accept && ++idle > 3 && modal_dialog &&
             lookup(modal_dialog)) {
-            pe32_u32 cmd = 1, k;                /* IDOK */
             idle = 0;
-            for (k = 0; k < 256; k++) {         /* main menu: MAINMISSION */
-                if (windows[k].used && windows[k].parent == modal_dialog &&
-                    windows[k].id == 1136) {    /* main menu has MAINQUIT */
-                    cmd = 3;
-                }
-            }
-            for (k = 0; k < 256; k++) {         /* mission list: native screen */
-                if (ui_hook && mission_choice < 0 && windows[k].used &&
-                    windows[k].parent == modal_dialog && windows[k].id == 1057) {
-                    int r = ui_hook(1, mission_pick >= 0 ? mission_pick : 0);
-                    if (r >= 0x100) {           /* WEAPONS: open that dialog */
-                        mission_pick = r & 0xff;
-                        cmd = 1057;
-                    } else if (r >= 0) {
-                        mission_pick = r;
-                    } else if (r == -1) {
-                        cmd = 2;                /* IDCANCEL: back to the menu */
-                    }
-                    break;
-                }
-            }
-            for (k = 0; k < 256; k++) {         /* weapons loadout: native screen */
-                if (ui_hook && mission_choice < 0 && windows[k].used &&
-                    windows[k].parent == modal_dialog && windows[k].id == 1025) {
-                    int r = ui_hook(2, mission_pick >= 0 ? mission_pick : 0);
-                    if (r == -1) {
-                        cmd = 2;                /* IDCANCEL: keep the loadout */
-                    }
-                    break;
-                }
-            }
-            if (mission_choice >= 0) {          /* mission list: pick one */
-                for (k = 0; k < 256; k++) {
-                    pe32_u32 lb = HWND_BASE + (pe32_u32)k;
-                    if (windows[k].used && windows[k].parent == modal_dialog &&
-                        windows[k].cls && str_eq_ci(windows[k].cls->name, "LISTBOX") &&
-                        pe32_wnd_listbox_count(lb) > 0) {
-                        int count = pe32_wnd_listbox_count(lb);
-                        int pick = mission_choice < count ? mission_choice : count - 1;
-                        pe32_wnd_listbox_select(lb, pick);
-                        /* LBN_SELCHANGE so the dialog updates its details. */
-                        pe32_wnd_post(modal_dialog, WM_COMMAND,
-                                      (1u << 16) | windows[k].id, lb);
-                        mission_choice = -1;
-                    }
-                }
-            }
-            pe32_wnd_post(modal_dialog, WM_COMMAND, cmd, 0);
+            drive_dialog();
             continue;
         }
         pe32_user_poll_input();
