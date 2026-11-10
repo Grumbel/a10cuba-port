@@ -13,7 +13,8 @@ struct ui_rect {
 
 enum ui_screen {
     UI_SCREEN_MISSIONS = 1,
-    UI_SCREEN_WEAPONS = 2
+    UI_SCREEN_WEAPONS = 2,
+    UI_SCREEN_PAUSE_MAP = 3
 };
 
 enum ui_mission_button {
@@ -89,5 +90,32 @@ int ui_weapons_button_at(int x, int y);
  * entry indexes. */
 int ui_lod_parse(const unsigned char *data, int size, int sel[UI_STATIONS],
                  int *fuel);
+
+
+/* ---- in-flight map (Esc) -------------------------------------------------- */
+
+enum ui_pause_button {
+    UI_PBTN_NONE = -1,
+    UI_PBTN_RELOAD = 0,
+    UI_PBTN_END,
+    UI_PBTN_RESUME,
+    UI_PBTN_COUNT
+};
+
+/* Results sent to the game: the control ids of dialog 186. */
+#define UI_PAUSE_RESUME 1
+#define UI_PAUSE_RELOAD 1020
+#define UI_PAUSE_END 1055
+
+extern const struct ui_rect ui_pause_buttons[UI_PBTN_COUNT], ui_pause_status;
+
+int ui_pause_button_at(int x, int y);
+/* Next/previous button for left/right keys (no wrapping past the ends). */
+int ui_pause_step(int current, int delta);
+/* Control id reported to the game for a button. */
+int ui_pause_command(int button);
+/* Compass heading in degrees (0 = north, clockwise, 0..359) of a drag from
+ * (x0,y0) to (x1,y1) in map pixels; -1 if the points coincide. */
+int ui_map_heading(int x0, int y0, int x1, int y1);
 
 #endif

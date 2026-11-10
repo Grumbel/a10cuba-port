@@ -30,4 +30,10 @@ int ui_weapons_screen(SDL_Renderer *renderer, const char *ui_dir,
                       const char *game_dir, int mission, int sel[11],
                       int *fuel, int *accepted);
 
+/* In-flight map opened by Esc. Returns 1 when finished; *value is
+ * UI_PAUSE_RESUME, UI_PAUSE_RELOAD or UI_PAUSE_END (confirmed natively).
+ * 0 if the window was closed, -1 if the assets are missing. */
+int ui_pause_map_screen(SDL_Renderer *renderer, const char *ui_dir, int mission,
+                        int *value);
+
 #endif

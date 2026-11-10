@@ -465,3 +465,188 @@ int ui_weapons_screen(SDL_Renderer *renderer, const char *ui_dir,
     free_assets(&a);
     return result;
 }
+
+/* ---- in-flight map (Esc) ---------------------------------------------------- */
+
+static const char *const pause_stem[UI_PBTN_COUNT] = {"MAPRELOAD", "ENDMISSION", "MAPOK"};
+
+static void pause_draw(struct ui_assets *a, int mission, int focus, int hover,
+                       int pressed, int drag[4], int confirm, int confirm_focus)
+{
+    char name[16], text[64];
+    int i, heading;
+    SDL_Renderer *r = a->renderer;
+    SDL_RenderClear(r);
+    draw(a, "144", 0, 0);
+    snprintf(name, sizeof name, "MISMAP%d", mission);
+    draw(a, name, ui_map_view.x, ui_map_view.y);
+    for (i = 0; i < UI_PBTN_COUNT; i++) {
+        char state = (pressed == i && hover == i) ? 'D' : 'F';
+        if (focus != i && pressed != i) {
+            state = 'U';
+        }
+        draw_button(a, pause_stem[i], state, &ui_pause_buttons[i]);
+    }
+    if (drag[0] >= 0) {
+        heading = ui_map_heading(drag[0], drag[1], drag[2], drag[3]);
+        SDL_SetRenderDrawColor(r, 255, 255, 0, 255);
+        SDL_RenderLine(r, (float)drag[0], (float)drag[1], (float)drag[2], (float)drag[3]);
+        if (heading >= 0) {
+            snprintf(text, sizeof text, "Heading %03d", heading);
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+            SDL_RenderDebugText(r, (float)ui_pause_status.x + 8, (float)ui_pause_status.y + 14,
+                                text);
+        }
+    }
+    if (confirm) {
+        SDL_FRect panel = {140, 170, 360, 120};
+        SDL_SetRenderDrawColor(r, 24, 24, 24, 255);
+        SDL_RenderFillRect(r, &panel);
+        SDL_SetRenderDrawColor(r, 200, 200, 200, 255);
+        SDL_RenderRect(r, &panel);
+        draw(a, "MESQUESTIONA", 156, 190);
+        SDL_RenderDebugText(r, 200, 200, "Are you sure you wish to end");
+        SDL_RenderDebugText(r, 200, 212, "this mission?");
+        draw(a, confirm_focus == 0 ? "MESYESF" : "MESYESU", 190, 250);
+        draw(a, confirm_focus == 1 ? "MESNOF" : "MESNOU", 320, 250);
+    }
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+}
+
+static const struct ui_rect confirm_buttons[2] = {{190, 250, 90, 28}, {320, 250, 90, 28}};
+
+/* Esc map during flight. *value: UI_PAUSE_RESUME, UI_PAUSE_RELOAD or
+ * UI_PAUSE_END (only after the native confirmation). */
+int ui_pause_map_screen(SDL_Renderer *renderer, const char *ui_dir, int mission,
+                        int *value)
+{
+    struct ui_assets a = {0};
+    int focus = UI_PBTN_RESUME, hover = UI_PBTN_NONE, pressed = UI_PBTN_NONE;
+    int key_pressed = UI_PBTN_NONE, confirm = 0, confirm_focus = 1;
+    int drag[4] = {-1, -1, -1, -1}, dragging = 0, result = 0, running = 1;
+    a.renderer = renderer;
+    a.dir = ui_dir;
+    if (!asset(&a, "144") || !asset(&a, "MAPOKF")) {
+        free_assets(&a);
+        return -1;
+    }
+    *value = UI_PAUSE_RESUME;
+    while (running) {
+        SDL_Event e;
+        int act = UI_PBTN_NONE, yes = -1;
+        while (SDL_PollEvent(&e)) {
+            float x, y;
+            switch (e.type) {
+            case SDL_EVENT_QUIT:
+                SDL_PushEvent(&e);
+                free_assets(&a);
+                return 0;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.repeat) break;
+                if (confirm) {
+                    if (e.key.key == SDLK_LEFT || e.key.key == SDLK_RIGHT) {
+                        confirm_focus = e.key.key == SDLK_LEFT ? 0 : 1;
+                    } else if (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER ||
+                               e.key.key == SDLK_SPACE) {
+                        yes = confirm_focus == 0;
+                    } else if (e.key.key == SDLK_Y) {
+                        yes = 1;
+                    } else if (e.key.key == SDLK_N || e.key.key == SDLK_ESCAPE) {
+                        yes = 0;
+                    }
+                    break;
+                }
+                if (e.key.key == SDLK_LEFT) focus = ui_pause_step(focus, -1);
+                else if (e.key.key == SDLK_RIGHT) focus = ui_pause_step(focus, 1);
+                else if (e.key.key == SDLK_SPACE) key_pressed = focus;   /* held */
+                else if (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER) act = focus;
+                else if (e.key.key == SDLK_ESCAPE) act = UI_PBTN_END;
+                break;
+            case SDL_EVENT_KEY_UP:
+                if (!confirm && e.key.key == SDLK_SPACE && key_pressed != UI_PBTN_NONE) {
+                    act = key_pressed;
+                    key_pressed = UI_PBTN_NONE;
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (confirm) {
+                    if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT) confirm_focus = 0;
+                    else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) confirm_focus = 1;
+                    else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) yes = confirm_focus == 0;
+                    else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) yes = 0;
+                    break;
+                }
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT) focus = ui_pause_step(focus, -1);
+                else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) focus = ui_pause_step(focus, 1);
+                else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) act = focus;
+                else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) act = UI_PBTN_RESUME;
+                else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) act = UI_PBTN_RELOAD;
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                x = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x;
+                y = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.y : e.button.y;
+                SDL_RenderCoordinatesFromWindow(renderer, x, y, &x, &y);
+                if (confirm) {
+                    int i, h = -1;
+                    for (i = 0; i < 2; i++) {
+                        if (ui_point_in(&confirm_buttons[i], (int)x, (int)y)) h = i;
+                    }
+                    if (h >= 0 && e.type != SDL_EVENT_MOUSE_BUTTON_UP) confirm_focus = h;
+                    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && h >= 0) yes = h == 0;
+                    break;
+                }
+                hover = ui_pause_button_at((int)x, (int)y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    pressed = hover;
+                    if (hover != UI_PBTN_NONE) {
+                        focus = hover;
+                    } else if (ui_point_in(&ui_map_view, (int)x, (int)y)) {
+                        dragging = 1;
+                        drag[0] = drag[2] = (int)x;
+                        drag[1] = drag[3] = (int)y;
+                    }
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging) {
+                    drag[2] = (int)x;
+                    drag[3] = (int)y;
+                } else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                    if (pressed != UI_PBTN_NONE && pressed == hover) act = hover;
+                    pressed = UI_PBTN_NONE;
+                    dragging = 0;
+                    drag[0] = -1;
+                }
+                break;
+            default: break;
+            }
+        }
+        if (yes >= 0) {
+            confirm = 0;
+            if (yes) {
+                *value = UI_PAUSE_END;
+                result = 1; running = 0;
+            }
+        } else if (act == UI_PBTN_END) {
+            confirm = 1; confirm_focus = 1;
+        } else if (act != UI_PBTN_NONE) {
+            *value = ui_pause_command(act);
+            result = 1; running = 0;
+        }
+        pause_draw(&a, mission, focus,
+                   key_pressed != UI_PBTN_NONE ? key_pressed : hover,
+                   key_pressed != UI_PBTN_NONE ? key_pressed : pressed, drag, confirm,
+                   confirm_focus);
+        if (ui_snapshot_path) {
+            SDL_Surface *shot = SDL_RenderReadPixels(renderer, NULL);
+            if (shot) {
+                SDL_SaveBMP(shot, ui_snapshot_path);
+                SDL_DestroySurface(shot);
+            }
+            result = 1; running = 0;
+        }
+        SDL_RenderPresent(renderer);
+        SDL_Delay(15);
+    }
+    free_assets(&a);
+    return result;
+}

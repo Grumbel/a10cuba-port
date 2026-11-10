@@ -17,6 +17,13 @@ const struct ui_rect ui_mission_buttons[UI_BTN_COUNT] = {
 const struct ui_rect ui_map_view = {16, 17, 608, 408};
 const struct ui_rect ui_map_ok = {505, 437, 100, 30};
 
+const struct ui_rect ui_pause_buttons[UI_PBTN_COUNT] = {
+    {16, 437, 103, 31},         /* reload */
+    {395, 437, 100, 30},        /* end mission */
+    {505, 437, 100, 30},        /* resume */
+};
+const struct ui_rect ui_pause_status = {165, 434, 207, 36};
+
 int ui_point_in(const struct ui_rect *r, int x, int y)
 {
     return x >= r->x && y >= r->y && x < r->x + r->w && y < r->y + r->h;
@@ -163,4 +170,58 @@ int ui_lod_parse(const unsigned char *data, int size, int sel[UI_STATIONS],
     }
     *fuel = data[11] | data[12] << 8 | data[13] << 16 | data[14] << 24;
     return 0;
+}
+
+int ui_pause_button_at(int x, int y)
+{
+    int i;
+    for (i = 0; i < UI_PBTN_COUNT; i++) {
+        if (ui_point_in(&ui_pause_buttons[i], x, y)) {
+            return i;
+        }
+    }
+    return UI_PBTN_NONE;
+}
+
+int ui_pause_step(int current, int delta)
+{
+    int next = current + delta;
+    if (next < 0 || next >= UI_PBTN_COUNT) {
+        return current;
+    }
+    return next;
+}
+
+int ui_pause_command(int button)
+{
+    switch (button) {
+    case UI_PBTN_RELOAD: return UI_PAUSE_RELOAD;
+    case UI_PBTN_END: return UI_PAUSE_END;
+    case UI_PBTN_RESUME: return UI_PAUSE_RESUME;
+    default: return 0;
+    }
+}
+
+/* atan(r) in degrees for r = num/den in [0,1], rational approximation with
+ * an error below half a degree. */
+static int atan_deg(int num, int den)
+{
+    long r = den ? (long)num * 1000 / den : 0;
+    long a = 45 * r - r * (r - 1000) / 1000 * (14000 + 3900 * r / 1000) / 1000;
+    return (int)((a + 500) / 1000);
+}
+
+int ui_map_heading(int x0, int y0, int x1, int y1)
+{
+    int dx = x1 - x0, dy = y0 - y1;
+    int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    int deg;
+    if (!dx && !dy) {
+        return -1;
+    }
+    deg = ax <= ay ? atan_deg(ax, ay) : 90 - atan_deg(ay, ax);
+    if (dx >= 0 && dy >= 0) return deg % 360;
+    if (dx >= 0) return (180 - deg) % 360;
+    if (dy < 0) return (180 + deg) % 360;
+    return (360 - deg) % 360;
 }

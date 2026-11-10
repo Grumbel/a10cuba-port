@@ -249,6 +249,8 @@ int main(int argc, char **argv)
         if (ui_demo == UI_SCREEN_WEAPONS) {
             ui_weapons_default(game_dir, mission, sel, &fuel);
             rc = ui_weapons_screen(r, ui_dir, game_dir, mission, sel, &fuel, &accepted);
+        } else if (ui_demo == UI_SCREEN_PAUSE_MAP) {
+            rc = ui_pause_map_screen(r, ui_dir, mission, &value);
         } else {
             rc = ui_mission_screen(r, ui_dir, mission, &value);
         }
@@ -415,6 +417,8 @@ int main(int argc, char **argv)
             got = -1;
             if (header[1] == UI_SCREEN_MISSIONS && ui_dir) {
                 got = ui_mission_screen(renderer, ui_dir, (int)header[2], &value);
+            } else if (header[1] == UI_SCREEN_PAUSE_MAP && ui_dir) {
+                got = ui_pause_map_screen(renderer, ui_dir, (int)header[2], &value);
             } else if (header[1] == UI_SCREEN_WEAPONS && ui_dir) {
                 static int sel[UI_STATIONS], fuel, loaded = -1;
                 int accepted = 0, k, backup[UI_STATIONS], backup_fuel;

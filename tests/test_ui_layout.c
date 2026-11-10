@@ -45,5 +45,22 @@ int main(void)
         CHECK(ui_weapons_button_at(520, 450) == UI_WBTN_OK);
         CHECK(ui_lod_parse(lod, 5, sel, &fuel) != 0);
     }
+    /* in-flight map */
+    CHECK(ui_pause_button_at(20, 440) == UI_PBTN_RELOAD);
+    CHECK(ui_pause_button_at(400, 440) == UI_PBTN_END);
+    CHECK(ui_pause_button_at(510, 440) == UI_PBTN_RESUME);
+    CHECK(ui_pause_button_at(300, 100) == UI_PBTN_NONE);
+    CHECK(ui_pause_step(UI_PBTN_RESUME, 1) == UI_PBTN_RESUME);
+    CHECK(ui_pause_step(UI_PBTN_RELOAD, -1) == UI_PBTN_RELOAD);
+    CHECK(ui_pause_step(UI_PBTN_RELOAD, 1) == UI_PBTN_END);
+    CHECK(ui_pause_command(UI_PBTN_END) == 1055);
+    CHECK(ui_pause_command(UI_PBTN_RESUME) == 1);
+    CHECK(ui_map_heading(100, 100, 100, 50) == 0);
+    CHECK(ui_map_heading(100, 100, 150, 100) == 90);
+    CHECK(ui_map_heading(100, 100, 100, 150) == 180);
+    CHECK(ui_map_heading(100, 100, 50, 100) == 270);
+    CHECK(ui_map_heading(100, 100, 150, 50) == 45);
+    CHECK(ui_map_heading(100, 100, 50, 150) == 225);
+    CHECK(ui_map_heading(5, 5, 5, 5) == -1);
     return 0;
 }

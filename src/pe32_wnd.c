@@ -336,6 +336,58 @@ static void store_msg(pe32_u32 *dst, const struct msg *m)
     dst[3] = m->lparam; dst[4] = m->time; dst[5] = m->x; dst[6] = m->y;
 }
 
+/* The pause dialog's Resume (id 1) relies on MFC window maps that this
+ * emulation never populates, so call the game's resume routine directly. */
+static int dialog_has_id(pe32_u32 hdlg, pe32_u32 id)
+{
+    pe32_u32 k;
+    for (k = 0; k < MAX_WINDOWS; k++) {
+        if (windows[k].used && windows[k].parent == hdlg &&
+            (windows[k].style & WS_CHILD) && windows[k].id == id) return 1;
+    }
+    return 0;
+}
+
+static void dialog_activate(pe32_u32 hdlg, pe32_u32 id, pe32_u32 ctl)
+{
+#if defined(__i386__)
+    if (id == 1 && dialog_has_id(hdlg, 1055)) {
+        void *game = *(void **)0x45da40;
+        if (game) {
+            __asm__ volatile("push $1\n\tcall *%1"
+                             : "+c"(game) : "r"(0x419cd0) : "eax", "edx", "memory", "cc");
+        }
+        return;
+    }
+#endif
+    pe32_wnd_post(hdlg, WM_COMMAND, id, ctl);
+}
+
+/* The in-flight map (Esc) is a modeless dialog; show the native map for it
+ * once and turn the answer into the dialog's own command. */
+static pe32_u32 pause_handled;
+
+static void pause_dialog_poll(void)
+{
+    pe32_u32 hdlg = modal_dialog;
+    int r;
+    if (!ui_hook || !hdlg || hdlg == pause_handled || !lookup(hdlg) ||
+        !dialog_has_id(hdlg, 1055) || !dialog_has_id(hdlg, 1020) ||
+        !dialog_has_id(hdlg, 1)) {
+        return;
+    }
+    pause_handled = hdlg;
+    r = ui_hook(3, mission_pick >= 0 ? mission_pick : 0);
+    if (r == 1) {
+        dialog_activate(hdlg, 1, 0);
+    } else if (r == 1020 || r == 1055) {
+        pe32_wnd_post(hdlg, WM_COMMAND, (pe32_u32)r, 0);
+        if (r == 1020) {
+            pause_handled = 0;          /* back to the map after a reload */
+        }
+    }
+}
+
 static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
                                                 pe32_u32 min, pe32_u32 max,
                                                 pe32_u32 flags)
@@ -344,6 +396,7 @@ static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
     (void)min; (void)max;
     if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
         /* Loops built on PeekMessage never call GetMessage. */
+        pause_dialog_poll();
         pe32_user_poll_input();
         if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
             return 0;
@@ -464,33 +517,6 @@ void pe32_wnd_focus_dialog_button(pe32_u32 id)
 /* Dialog keyboard interface for the messages the game's own loop sees:
  * arrows/Tab move the focus between buttons, Space clicks the focused one,
  * Enter sends IDOK and Esc IDCANCEL. Returns 1 if the message was used. */
-/* The pause dialog's Resume (id 1) relies on MFC window maps that this
- * emulation never populates, so call the game's resume routine directly. */
-static int dialog_has_id(pe32_u32 hdlg, pe32_u32 id)
-{
-    pe32_u32 k;
-    for (k = 0; k < MAX_WINDOWS; k++) {
-        if (windows[k].used && windows[k].parent == hdlg &&
-            (windows[k].style & WS_CHILD) && windows[k].id == id) return 1;
-    }
-    return 0;
-}
-
-static void dialog_activate(pe32_u32 hdlg, pe32_u32 id, pe32_u32 ctl)
-{
-#if defined(__i386__)
-    if (id == 1 && dialog_has_id(hdlg, 1055)) {
-        void *game = *(void **)0x45da40;
-        if (game) {
-            __asm__ volatile("push $1\n\tcall *%1"
-                             : "+c"(game) : "r"(0x419cd0) : "eax", "edx", "memory", "cc");
-        }
-        return;
-    }
-#endif
-    pe32_wnd_post(hdlg, WM_COMMAND, id, ctl);
-}
-
 static pe32_u32 PE32_WINAPI user_is_dialog_message_a(pe32_u32 hdlg, const pe32_u32 *m)
 {
     pe32_u32 b[16], vk = m[2];
