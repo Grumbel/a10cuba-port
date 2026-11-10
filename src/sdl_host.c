@@ -9,6 +9,8 @@
 #include <SDL3/SDL.h>
 
 #include "gamepad_map.h"
+#include "ui_layout.h"
+#include "ui_screens.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -21,7 +23,7 @@
 
 enum {
     INPUT_KEY = 1, INPUT_MOVE = 2, INPUT_BUTTON = 3,
-    INPUT_JOY_AXIS = 4, INPUT_JOY_BUTTON = 5, INPUT_JOY_PRESENT = 6,
+    INPUT_JOY_AXIS = 4, INPUT_JOY_BUTTON = 5, INPUT_JOY_PRESENT = 6, INPUT_UI_RESULT = 7,
     MAX_FRAME = 4096
 };
 
@@ -187,7 +189,7 @@ static int usage(const char *program)
     fprintf(stderr,
             "Usage: %s [--runner PATH] [--game-dir DIR] [--no-qemu]\n"
             "          [--max-frames N] [--snapshot OUT.bmp] [--scale N]\n"
-            "          [--mission N]\n"
+            "          [--mission N] [--ui-dir DIR]\n"
             "Runs the original A-10 Cuba! binaries from DIR (default\n"
             "./data/disc/A-10Cuba) in the i386 runner and shows them in SDL.\n"
             "--mission N starts mission N (1 = first in the mission list).\n",
@@ -200,6 +202,7 @@ int main(int argc, char **argv)
     const char *runner = getenv("A10_PE32_NATIVE_BIN");
     const char *game_dir = getenv("A10_CUBA_DATA_DIR");
     const char *snapshot = NULL;
+    const char *ui_dir = getenv("A10_CUBA_UI_DIR");
     int mission = 0, use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
     int frame_pipe[2], input_pipe[2], audio_pipe[2];
     SDL_AudioStream *audio = NULL;
@@ -222,6 +225,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--snapshot") && i + 1 < argc) snapshot = argv[++i];
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mission") && i + 1 < argc) mission = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--ui-snapshot") && i + 1 < argc) ui_snapshot_path = argv[++i];
+        else if (!strcmp(argv[i], "--ui-dir") && i + 1 < argc) ui_dir = argv[++i];
         else return usage(argv[0]);
     }
     if (scale < 1) scale = 1;
@@ -368,6 +373,30 @@ int main(int argc, char **argv)
         if (!read_full(frame_pipe[0], header, sizeof header)) {
             status = frames ? 0 : 1;
             break;
+        }
+        if (header[0] == 0xa10f0002u) {
+            /* The runner asks for a native screen; answer with the result. */
+            int value = -2, got;
+            if (!window) {
+                window = SDL_CreateWindow("A-10 Cuba!", 640 * scale, 480 * scale,
+                                          SDL_WINDOW_RESIZABLE);
+                renderer = window ? SDL_CreateRenderer(window, NULL) : NULL;
+                if (!renderer) {
+                    fprintf(stderr, "SDL window/renderer: %s\n", SDL_GetError());
+                    break;
+                }
+                SDL_SetRenderLogicalPresentation(renderer, 640, 480,
+                                                 SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            }
+            got = header[1] == UI_SCREEN_MISSIONS && ui_dir
+                ? ui_mission_screen(renderer, ui_dir, (int)header[2], &value) : -1;
+            if (got == 0) {
+                status = 0;
+                break;
+            }
+            if (got < 0) value = -2;
+            send_input(input_pipe[1], INPUT_UI_RESULT, header[1], (uint32_t)value);
+            continue;
         }
         if (header[0] != 0xa10f0001u || header[1] == 0 || header[2] == 0 ||
             header[1] > MAX_FRAME || header[2] > MAX_FRAME) {

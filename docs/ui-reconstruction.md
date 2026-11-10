@@ -52,3 +52,11 @@ The output is copyrighted and stays in the ignored `data/` directory.
 3. Unknowns to resolve by tracing the game's dialog procedures: how the
    loadout is read back (station combos, fuel, `.lod` save/load) and how the
    map screen is told which mission to draw.
+
+## Status: mission screen
+
+The mission list (dialog 185) is replaced by a native screen
+(`src/ui_layout.c` logic, `src/ui_screens.c` rendering). Keys, gamepad and
+mouse work; the Weapons button is not implemented yet. See
+`docs/launcher.md` for the runner/host protocol. Cancel returns to the main
+menu, which is still auto-driven.

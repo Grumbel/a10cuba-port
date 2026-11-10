@@ -2,11 +2,18 @@
 
 `nix run . -- [--mission N] [--scale N] ...` runs the original game.
 
-- `--mission N` picks mission N (1-based, in the order of the mission list;
-  the disc has 12 loadouts, `Default01AirStrike` to `Default12CanyonRun`).
-  The launcher auto-accepts the menu dialogs; the runner answers the mission
-  dialog's list-selection query with N. Without the option the first
-  mission starts.
+- `--mission N` picks list entry N (1-16: Training 1-4, then Missions 01-12,
+  so 5 is Airstrike and 16 is Canyon Run) and skips the mission screen.
+  Without it the runner shows a native mission screen (`src/ui_screens.c`)
+  instead of the original dialog; the other menu dialogs are auto-accepted.
+- Native screens use bitmaps extracted from the exe by
+  `tools/extract_ui_assets.py` (done once by the launcher into
+  `a10cuba-native/ui` in XDG data). `--ui-dir DIR` (env `A10_CUBA_UI_DIR`)
+  selects them; without it the old auto-accept behaviour is used.
+  `--ui-snapshot FILE` saves the first native frame as BMP and exits.
+- Protocol: the runner writes a frame header with magic `0xa10f0002`
+  `{screen, arg}`; the host runs the screen and answers with input record
+  type 7 `{7, screen, value}` (value = list index, -1 cancel, -2 no UI).
 - Keyboard input: DirectDraw's `SetCooperativeLevel` window is treated as the
   active, focused application window (`WM_ACTIVATEAPP`, `WM_ACTIVATE`,
   `WM_SETFOCUS` are posted to it) and receives all key and mouse messages,

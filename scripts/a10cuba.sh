@@ -8,7 +8,8 @@ usage() {
   printf '%s\n' \
     'Usage: a10cuba [--disc DIRECTORY | --iso IMAGE | --game-dir DIRECTORY]' \
     '               [--mission N] [--scale N] [--no-qemu] [-- host options]' \
-    '--mission N starts mission N (1-12; default: the first in the list).' \
+    '--mission N starts list entry N (1-16: 4 training missions, then 12) and' \
+    'skips the mission screen; without it the native mission screen is shown.' \
     'First run needs --iso or --disc (or run from the port directory) to copy' \
     'the game files into the XDG data directory (a10cuba-native/game). --game-dir uses an' \
     'existing directory containing A10Cuba.exe and A10Sim.dll instead.' \
@@ -94,5 +95,26 @@ if [[ ! -f "$game_dir/A10Cuba.exe" || ! -f "$game_dir/A10Sim.dll" ]]; then
   exit 1
 fi
 
+# Native screens (mission list ...) use bitmaps extracted from the exe once.
+if [[ ${XDG_DATA_HOME:-} == /* ]]; then
+  ui_dir=$XDG_DATA_HOME/a10cuba-native/ui
+elif [[ ${HOME:-} == /* ]]; then
+  ui_dir=$HOME/.local/share/a10cuba-native/ui
+else
+  ui_dir=
+fi
+ui_dir=${A10_CUBA_UI_DIR:-$ui_dir}
+ui_tools=${A10_UI_TOOLS:-$(dirname -- "${BASH_SOURCE[0]}")/../tools}
+ui_args=()
+if [[ -n $ui_dir ]]; then
+  if [[ ! -f "$ui_dir/bmp/142.bmp" ]]; then
+    python3 "$ui_tools/extract_ui_assets.py" "$game_dir/A10Cuba.exe" --out "$ui_dir" >/dev/null ||
+      printf 'Could not extract UI assets; using the original dialogs.\n' >&2
+  fi
+  if [[ -f "$ui_dir/bmp/142.bmp" ]]; then
+    ui_args=(--ui-dir "$ui_dir")
+  fi
+fi
+
 host=${A10_SDL_HOST:-./build/a10-sdl-host}
-exec "$host" --game-dir "$game_dir" "${host_args[@]}"
+exec "$host" --game-dir "$game_dir" "${ui_args[@]}" "${host_args[@]}"

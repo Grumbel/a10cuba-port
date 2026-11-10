@@ -799,6 +799,8 @@ static void dump_frame(const struct pe32_ddraw_frame *frame)
  * on the non-blocking input_fd. */
 static s32 frame_fd = -1, input_fd = -1, audio_fd = -1;
 static u32 audio_last_ms, audio_carry;
+static s32 ui_result;
+static int ui_ready;
 
 static void host_input_poll(void)
 {
@@ -809,6 +811,11 @@ static void host_input_poll(void)
     }
     while ((n = syscall3(SYS_READ, (u32)input_fd, (u32)rec, sizeof rec)) >= 16) {
         for (i = 0; i + 16 <= n; i += 16) {
+            if (rec[i / 4] == 7) {          /* native screen result */
+                ui_result = (s32)rec[i / 4 + 2];
+                ui_ready = 1;
+                continue;
+            }
             pe32_user_input_event(rec[i / 4], rec[i / 4 + 1], rec[i / 4 + 2]);
         }
     }
@@ -839,6 +846,27 @@ static void audio_pump(void)
     if (audio_fd >= 0) {
         syscall3(SYS_WRITE, (u32)audio_fd, (u32)chunk, frames * 4);
     }
+}
+
+/* Ask the host to run a native screen and wait for its answer. */
+static int host_ui(int screen, int arg)
+{
+    u32 header[3];
+    if (frame_fd < 0 || input_fd < 0) {
+        return -2;
+    }
+    header[0] = 0xa10f0002u;
+    header[1] = (u32)screen;
+    header[2] = (u32)arg;
+    write_all(frame_fd, header, sizeof header);
+    ui_ready = 0;
+    while (!ui_ready) {
+        host_input_poll();
+        if (!ui_ready) {
+            pe32_win32_sleep(10);
+        }
+    }
+    return (int)ui_result;
 }
 
 static void host_present(const struct pe32_ddraw_frame *frame)
@@ -913,6 +941,7 @@ int pe32_main(int argc, char **argv)
         } else if (strings_equal(argv[i], "--input-fd") && i + 1 < argc) {
             input_fd = (s32)parse_number(argv[++i]);
             pe32_user_set_input_poll(host_input_poll);
+            pe32_wnd_set_ui(host_ui);
         } else if (strings_equal(argv[i], "--link")) {
             link = 1;
         } else if (argv[i][0] == '-' || module_count == 2) {

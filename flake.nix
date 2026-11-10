@@ -19,7 +19,7 @@
         buildInputs = [ pkgs.sdl3 ];
         buildPhase = ''
           runHook preBuild
-          $CC -std=gnu11 -O2 -Wall -Wextra -Isrc src/sdl_host.c -o a10-sdl-host \
+          $CC -std=gnu11 -O2 -Wall -Wextra -Isrc src/sdl_host.c src/ui_layout.c src/ui_screens.c -o a10-sdl-host \
             $(pkg-config --cflags --libs sdl3)
           runHook postBuild
         '';
@@ -34,8 +34,9 @@
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
       in pkgs.writeShellApplication {
         name = "a10cuba";
-        runtimeInputs = with pkgs; [ coreutils p7zip qemu-user ];
+        runtimeInputs = with pkgs; [ coreutils p7zip qemu-user python3 ];
         text = ''
+          export A10_UI_TOOLS=${./tools}
           export A10_PE32_NATIVE_BIN=${self.packages.x86_64-linux.a10cuba-native}/bin/a10-pe32-native
           export A10_SDL_HOST=${self.packages.x86_64-linux.a10cuba-sdl-host}/bin/a10-sdl-host
           ${builtins.readFile ./scripts/a10cuba.sh}

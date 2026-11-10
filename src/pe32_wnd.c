@@ -68,6 +68,8 @@ static pe32_wnd_idle_fn idle_hook;
 
 void pe32_wnd_set_idle(pe32_wnd_idle_fn idle) { idle_hook = idle; }
 void pe32_wnd_set_auto_accept(int enable) { auto_accept = enable; }
+static pe32_wnd_ui_fn ui_hook;
+void pe32_wnd_set_ui(pe32_wnd_ui_fn ui) { ui_hook = ui; }
 
 static struct wnd *lookup(pe32_u32 hwnd)
 {
@@ -349,6 +351,18 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
                 if (windows[k].used && windows[k].parent == modal_dialog &&
                     windows[k].id == 1136) {    /* main menu has MAINQUIT */
                     cmd = 3;
+                }
+            }
+            for (k = 0; k < 256; k++) {         /* mission list: native screen */
+                if (ui_hook && mission_choice < 0 && windows[k].used &&
+                    windows[k].parent == modal_dialog && windows[k].id == 1057) {
+                    int r = ui_hook(1, mission_pick >= 0 ? mission_pick : 0);
+                    if (r >= 0) {
+                        mission_pick = r;
+                    } else if (r == -1) {
+                        cmd = 2;                /* IDCANCEL: back to the menu */
+                    }
+                    break;
                 }
             }
             if (mission_choice >= 0) {          /* mission list: pick one */
