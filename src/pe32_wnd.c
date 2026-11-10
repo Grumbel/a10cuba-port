@@ -82,6 +82,7 @@ void pe32_wnd_set_auto_accept(int enable) { auto_accept = enable; }
 static pe32_wnd_ui_fn ui_hook;
 void pe32_wnd_set_ui(pe32_wnd_ui_fn ui) { ui_hook = ui; }
 
+
 static struct wnd *lookup(pe32_u32 hwnd)
 {
     pe32_u32 i = hwnd - HWND_BASE;
@@ -342,7 +343,11 @@ static pe32_u32 PE32_WINAPI user_peek_message_a(pe32_u32 *dst, pe32_u32 hwnd,
     struct msg m;
     (void)min; (void)max;
     if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
-        return 0;
+        /* Loops built on PeekMessage never call GetMessage. */
+        pe32_user_poll_input();
+        if (!take_message(&m, hwnd, (int)(flags & PM_REMOVE))) {
+            return 0;
+        }
     }
     store_msg(dst, &m);
     return 1;
@@ -429,6 +434,97 @@ static pe32_u32 PE32_WINAPI user_dispatch_message_a(const pe32_u32 *m)
         return call_proc(m[3], m[0], m[1], m[2], now_ms());
     }
     return w ? call_proc(w->proc, m[0], m[1], m[2], m[3]) : 0;
+}
+
+/* Push buttons of a dialog in tab order (creation order). */
+static int dialog_buttons(pe32_u32 hdlg, pe32_u32 *out, int max)
+{
+    pe32_u32 k;
+    int n = 0;
+    for (k = 0; k < MAX_WINDOWS && n < max; k++) {
+        if (windows[k].used && windows[k].parent == hdlg && (windows[k].style & 0x10000u) &&
+            windows[k].cls && str_eq_ci(windows[k].cls->name, "BUTTON")) {
+            out[n++] = HWND_BASE + k;
+        }
+    }
+    return n;
+}
+
+void pe32_wnd_focus_dialog_button(pe32_u32 id)
+{
+    pe32_u32 b[16];
+    int i, n = modal_dialog ? dialog_buttons(modal_dialog, b, 16) : 0;
+    for (i = 0; i < n; i++) {
+        if (lookup(b[i])->id == id) {
+            focus = b[i];
+        }
+    }
+}
+
+/* Dialog keyboard interface for the messages the game's own loop sees:
+ * arrows/Tab move the focus between buttons, Space clicks the focused one,
+ * Enter sends IDOK and Esc IDCANCEL. Returns 1 if the message was used. */
+/* The pause dialog's Resume (id 1) relies on MFC window maps that this
+ * emulation never populates, so call the game's resume routine directly. */
+static int dialog_has_id(pe32_u32 hdlg, pe32_u32 id)
+{
+    pe32_u32 k;
+    for (k = 0; k < MAX_WINDOWS; k++) {
+        if (windows[k].used && windows[k].parent == hdlg &&
+            (windows[k].style & WS_CHILD) && windows[k].id == id) return 1;
+    }
+    return 0;
+}
+
+static void dialog_activate(pe32_u32 hdlg, pe32_u32 id, pe32_u32 ctl)
+{
+#if defined(__i386__)
+    if (id == 1 && dialog_has_id(hdlg, 1055)) {
+        void *game = *(void **)0x45da40;
+        if (game) {
+            __asm__ volatile("push $1\n\tcall *%1"
+                             : "+c"(game) : "r"(0x419cd0) : "eax", "edx", "memory", "cc");
+        }
+        return;
+    }
+#endif
+    pe32_wnd_post(hdlg, WM_COMMAND, id, ctl);
+}
+
+static pe32_u32 PE32_WINAPI user_is_dialog_message_a(pe32_u32 hdlg, const pe32_u32 *m)
+{
+    pe32_u32 b[16], vk = m[2];
+    int i, n, cur = -1;
+    struct wnd *d = lookup(hdlg);
+    if (!d || !d->cls || d->cls->name[0] != '#' || m[1] != 0x100) {
+        return 0;
+    }
+    n = dialog_buttons(hdlg, b, 16);
+    for (i = 0; i < n; i++) {
+        if (b[i] == focus) {
+            cur = i;
+        }
+    }
+    if ((vk == 0x25 || vk == 0x26 || vk == 0x27 || vk == 0x28 || vk == 0x09) && n) {
+        int back = vk == 0x25 || vk == 0x26;
+        cur = cur < 0 ? 0 : (cur + (back ? n - 1 : 1)) % n;
+        focus = b[cur];
+        return 1;
+    }
+    if (vk == 0x20 && cur >= 0) {
+        dialog_activate(hdlg, lookup(b[cur])->id, b[cur]);
+        return 1;
+    }
+    if (vk == 0x0d) {
+        if (cur >= 0) dialog_activate(hdlg, lookup(b[cur])->id, b[cur]);
+        else dialog_activate(hdlg, 1, 0);
+        return 1;
+    }
+    if (vk == 0x1b) {
+        pe32_wnd_post(hdlg, WM_COMMAND, 2, 0);
+        return 1;
+    }
+    return 0;
 }
 
 static pe32_u32 PE32_WINAPI user_translate_message(const pe32_u32 *m)
@@ -1038,13 +1134,19 @@ void pe32_wnd_set_game_window(pe32_u32 hwnd)
 
 pe32_u32 pe32_wnd_input_target(void)
 {
+    if (modal_dialog && lookup(modal_dialog)) {
+        return modal_dialog;
+    }
     if (game_window && lookup(game_window)) {
         return game_window;
     }
     return focus ? focus : active;
 }
 
-static pe32_u32 PE32_WINAPI user_get_focus(void) { return focus; }
+static pe32_u32 PE32_WINAPI user_get_focus(void)
+{
+    return focus;
+}
 
 static pe32_u32 PE32_WINAPI user_set_active_window(pe32_u32 hwnd)
 {
@@ -1209,9 +1311,17 @@ static pe32_u32 PE32_WINAPI user_create_dialog_indirect_param_a(
             first_control = child;
         }
     }
-    if (call_proc(windows[hwnd - HWND_BASE].proc, hwnd, WM_INITDIALOG,
-                  first_control, init) && first_control) {
-        focus = first_control;
+    {
+        pe32_u32 tabs[16];
+        pe32_u32 ntab = (pe32_u32)dialog_buttons(hwnd, tabs, 16);
+        if (call_proc(windows[hwnd - HWND_BASE].proc, hwnd, WM_INITDIALOG,
+                      first_control, init) && first_control) {
+            focus = first_control;
+        }
+        /* Unless the dialog chose, the first tab stop starts focused. */
+        if (ntab && (!lookup(focus) || lookup(focus)->parent != hwnd)) {
+            focus = tabs[0];
+        }
     }
     active = hwnd;
     modal_dialog = hwnd;
@@ -1332,6 +1442,7 @@ enum pe32_link_status pe32_wnd_resolve(const char *name, pe32_u32 *address)
     E("GetMessageA", user_get_message_a)
     E("DispatchMessageA", user_dispatch_message_a)
     E("TranslateMessage", user_translate_message)
+    E("IsDialogMessageA", user_is_dialog_message_a)
     E("PostQuitMessage", user_post_quit_message)
     E("GetMessagePos", user_get_message_pos)
     E("GetMessageTime", user_get_message_time)
