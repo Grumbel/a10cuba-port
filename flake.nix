@@ -8,6 +8,46 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in {
+      packages.x86_64-linux.a10cuba-sdl-host = let
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      in pkgs.stdenv.mkDerivation {
+        pname = "a10cuba-sdl-host";
+        version = "0.1.0";
+        src = self;
+        dontConfigure = true;
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.sdl3 ];
+        buildPhase = ''
+          runHook preBuild
+          $CC -std=gnu11 -O2 -Wall -Wextra -Isrc src/sdl_host.c -o a10-sdl-host \
+            $(pkg-config --cflags --libs sdl3)
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 a10-sdl-host "$out/bin/a10-sdl-host"
+          runHook postInstall
+        '';
+        meta.description = "SDL3 front end for the native A-10 Cuba! runner";
+      };
+      packages.x86_64-linux.a10cuba = let
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      in pkgs.writeShellApplication {
+        name = "a10cuba";
+        runtimeInputs = with pkgs; [ coreutils p7zip qemu-user ];
+        text = ''
+          export A10_PE32_NATIVE_BIN=${self.packages.x86_64-linux.a10cuba-native}/bin/a10-pe32-native
+          export A10_SDL_HOST=${self.packages.x86_64-linux.a10cuba-sdl-host}/bin/a10-sdl-host
+          ${builtins.readFile ./scripts/a10cuba.sh}
+        '';
+      };
+      packages.x86_64-linux.default = self.packages.x86_64-linux.a10cuba;
+      apps.x86_64-linux.a10cuba = {
+        type = "app";
+        program = "${self.packages.x86_64-linux.a10cuba}/bin/a10cuba";
+        meta.description = "Play the original A-10 Cuba! natively with SDL3";
+      };
+      apps.x86_64-linux.default = self.apps.x86_64-linux.a10cuba;
       packages.x86_64-linux.a10cuba-wine = let
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
       in pkgs.writeShellApplication {
