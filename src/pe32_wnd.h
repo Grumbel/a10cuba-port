@@ -28,6 +28,9 @@ void pe32_wnd_set_mission(int index);
  * -1 cancelled, -2 no native screen available). */
 typedef int (*pe32_wnd_ui_fn)(int screen, int arg);
 void pe32_wnd_set_ui(pe32_wnd_ui_fn ui);
+/* Called with a mission index when a mission is chosen after one has been
+ * played; the process may restart itself and never return. */
+void pe32_wnd_set_restart(void (*restart)(int mission));
 /* Weapon entry index chosen for station k (0..10) on the native screen. */
 void pe32_wnd_set_station(int k, int index);
 int pe32_wnd_listbox_count(pe32_u32 hwnd);

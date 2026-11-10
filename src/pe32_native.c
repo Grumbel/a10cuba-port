@@ -853,6 +853,41 @@ static void audio_pump(void)
 }
 
 /* Ask the host to run a native screen and wait for its answer. */
+static int saved_argc;
+static char **saved_argv;
+
+/* A10Sim.dll cannot build a second simulation in the same process: the
+ * previous mission's views and managers are left dangling and the next
+ * activation crashes. Start the next mission in a fresh process instead,
+ * keeping the frame, input and audio descriptors, and skip to the mission. */
+static void restart_mission(int index)
+{
+    static char *args[20];
+    static char number[12];
+    int n = 0, i, len = 0;
+    u32 v = (u32)index + 1;
+    char tmp[12];
+    do {
+        tmp[len++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v);
+    for (i = 0; i < len; ++i) {
+        number[i] = tmp[len - 1 - i];
+    }
+    number[len] = 0;
+    for (i = 0; i < saved_argc && n < 16; ++i) {
+        if (strings_equal(saved_argv[i], "--mission") && i + 1 < saved_argc) {
+            ++i;
+            continue;
+        }
+        args[n++] = saved_argv[i];
+    }
+    args[n++] = (char *)"--mission";
+    args[n++] = number;
+    args[n] = 0;
+    (void)syscall3(11, (u32)"/proc/self/exe", (u32)args, 0);
+}
+
 static int host_ui(int screen, int arg)
 {
     u32 header[3];
@@ -914,6 +949,8 @@ int pe32_main(int argc, char **argv)
 {
     struct pe32_module modules[2] = { {0}, {0} };
     int module_count = 0, link = 0, execute = 0, i;
+    saved_argc = argc;
+    saved_argv = argv;
     pe32_heap_set_backend(map_heap_pages, unmap_heap_pages);
     pe32_winmm_set_clock(monotonic_milliseconds);
     pe32_proc_set_backend(exit_process, sleep_milliseconds);
@@ -946,6 +983,7 @@ int pe32_main(int argc, char **argv)
             input_fd = (s32)parse_number(argv[++i]);
             pe32_user_set_input_poll(host_input_poll);
             pe32_wnd_set_ui(host_ui);
+            pe32_wnd_set_restart(restart_mission);
         } else if (strings_equal(argv[i], "--link")) {
             link = 1;
         } else if (argv[i][0] == '-' || module_count == 2) {

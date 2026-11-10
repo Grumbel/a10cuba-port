@@ -81,6 +81,9 @@ void pe32_wnd_set_idle(pe32_wnd_idle_fn idle) { idle_hook = idle; }
 void pe32_wnd_set_auto_accept(int enable) { auto_accept = enable; }
 static pe32_wnd_ui_fn ui_hook;
 void pe32_wnd_set_ui(pe32_wnd_ui_fn ui) { ui_hook = ui; }
+static void (*restart_hook)(int);
+static int mission_played;
+void pe32_wnd_set_restart(void (*restart)(int)) { restart_hook = restart; }
 
 
 static struct wnd *lookup(pe32_u32 hwnd)
@@ -391,6 +394,8 @@ static void pause_dialog_poll(void)
             pause_handled = 0;          /* back to the map after a reload */
         } else {
             menu_driven = 0;            /* the menu returns once the mission ends */
+            mission_played = 1;
+            mission_choice = -1;        /* the next mission is chosen on screen */
         }
     }
 }
@@ -460,6 +465,9 @@ static void drive_dialog(void)
                 cmd = 1057;
             } else if (r >= 0) {
                 mission_pick = r;
+                if (mission_played && restart_hook) {
+                    restart_hook(r);
+                }
             } else if (r == -1) {
                 cmd = 2;                /* IDCANCEL: back to the menu */
             }

@@ -23,3 +23,14 @@
   `WM_SETFOCUS` are posted to it) and receives all key and mouse messages,
   with PC scan codes in `lParam`. Before this the game stayed "inactive"
   behind the auto-accepted dialogs and ignored input.
+
+## Playing several missions
+
+A10Sim.dll cannot build a second simulation in the same process: after End
+Mission the old view still lists destroyed entities and the next activation
+uses manager objects that are not initialised yet (SIGSEGV at DLL offset
+0x3d6a2). The runner therefore re-executes itself (`/proc/self/exe`, same
+arguments plus `--mission N`, same frame/input/audio descriptors) when a
+mission is chosen after one has been played. The host keeps its pipes and just
+sees the new process's frames. The weapon loadout screen is shown before the
+restart; applying it in flight is still unverified.
