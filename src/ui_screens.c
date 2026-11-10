@@ -470,6 +470,8 @@ int ui_weapons_screen(SDL_Renderer *renderer, const char *ui_dir,
 
 static const char *const pause_stem[UI_PBTN_COUNT] = {"MAPRELOAD", "ENDMISSION", "MAPOK"};
 
+static const struct ui_rect confirm_buttons[2] = {{250, 262, 116, 41}, {380, 262, 116, 41}};
+
 static void pause_draw(struct ui_assets *a, int mission, int focus, int hover,
                        int pressed, int drag[4], int confirm, int confirm_focus)
 {
@@ -499,21 +501,33 @@ static void pause_draw(struct ui_assets *a, int mission, int focus, int hover,
         }
     }
     if (confirm) {
-        SDL_FRect panel = {140, 170, 360, 120};
-        SDL_SetRenderDrawColor(r, 24, 24, 24, 255);
+        SDL_FRect panel = {120, 165, 400, 150};
+        SDL_Texture *t = asset(a, "MESQUESTIONA");
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 140);
+        SDL_RenderFillRect(r, NULL);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(r, 64, 66, 66, 255);
         SDL_RenderFillRect(r, &panel);
         SDL_SetRenderDrawColor(r, 200, 200, 200, 255);
         SDL_RenderRect(r, &panel);
-        draw(a, "MESQUESTIONA", 156, 190);
-        SDL_RenderDebugText(r, 200, 200, "Are you sure you wish to end");
-        SDL_RenderDebugText(r, 200, 212, "this mission?");
-        draw(a, confirm_focus == 0 ? "MESYESF" : "MESYESU", 190, 250);
-        draw(a, confirm_focus == 1 ? "MESNOF" : "MESNOU", 320, 250);
+        if (t) {
+            /* six animation frames side by side */
+            float w, h;
+            SDL_GetTextureSize(t, &w, &h);
+            w /= 6;
+            SDL_FRect src = {(float)((SDL_GetTicks() / 120) % 6) * w, 0, w, h};
+            SDL_FRect dst = {panel.x + 16, panel.y + (panel.h - h) / 2, w, h};
+            SDL_RenderTexture(r, t, &src, &dst);
+        }
+        SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+        SDL_RenderDebugText(r, 250, 195, "Are you sure you wish to end");
+        SDL_RenderDebugText(r, 250, 207, "this mission?");
+        draw(a, confirm_focus == 0 ? "MESYESF" : "MESYESU", confirm_buttons[0].x, confirm_buttons[0].y);
+        draw(a, confirm_focus == 1 ? "MESNOF" : "MESNOU", confirm_buttons[1].x, confirm_buttons[1].y);
     }
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
 }
-
-static const struct ui_rect confirm_buttons[2] = {{190, 250, 90, 28}, {320, 250, 90, 28}};
 
 /* Esc map during flight. *value: UI_PAUSE_RESUME, UI_PAUSE_RELOAD or
  * UI_PAUSE_END (only after the native confirmation). */
@@ -631,6 +645,9 @@ int ui_pause_map_screen(SDL_Renderer *renderer, const char *ui_dir, int mission,
         } else if (act != UI_PBTN_NONE) {
             *value = ui_pause_command(act);
             result = 1; running = 0;
+        }
+        if (ui_snapshot_path && getenv("A10_UI_DEMO_CONFIRM")) {
+            confirm = 1;    /* test aid: snapshot the confirmation box */
         }
         pause_draw(&a, mission, focus,
                    key_pressed != UI_PBTN_NONE ? key_pressed : hover,

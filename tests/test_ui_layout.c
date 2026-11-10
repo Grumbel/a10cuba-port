@@ -46,7 +46,7 @@ int main(void)
         CHECK(ui_lod_parse(lod, 5, sel, &fuel) != 0);
     }
     /* in-flight map */
-    CHECK(ui_pause_button_at(20, 440) == UI_PBTN_RELOAD);
+    CHECK(ui_pause_button_at(40, 440) == UI_PBTN_RELOAD);
     CHECK(ui_pause_button_at(400, 440) == UI_PBTN_END);
     CHECK(ui_pause_button_at(510, 440) == UI_PBTN_RESUME);
     CHECK(ui_pause_button_at(300, 100) == UI_PBTN_NONE);

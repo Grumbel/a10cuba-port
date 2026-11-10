@@ -18,8 +18,8 @@ const struct ui_rect ui_map_view = {16, 17, 608, 408};
 const struct ui_rect ui_map_ok = {505, 437, 100, 30};
 
 const struct ui_rect ui_pause_buttons[UI_PBTN_COUNT] = {
-    {16, 437, 103, 31},         /* reload */
-    {395, 437, 100, 30},        /* end mission */
+    {31, 437, 103, 31},         /* reload */
+    {401, 437, 100, 30},        /* end mission */
     {505, 437, 100, 30},        /* resume */
 };
 const struct ui_rect ui_pause_status = {165, 434, 207, 36};
@@ -78,10 +78,10 @@ void ui_mission_move(struct ui_mission_state *s, int delta)
 const struct ui_rect ui_weapons_stations = {99, 41, 215, UI_STATIONS * UI_STATION_ROW_H};
 const struct ui_rect ui_weapons_desc = {387, 41, 230, 280};
 const struct ui_rect ui_weapons_buttons[UI_WBTN_COUNT] = {
-    {41, 399, 148, 30},         /* default loadout */
-    {191, 399, 146, 30},        /* unload all */
+    {39, 398, 148, 30},         /* default loadout */
+    {190, 398, 146, 30},        /* unload all */
     {401, 439, 101, 31},        /* cancel */
-    {505, 439, 101, 31},        /* ok */
+    {504, 439, 101, 31},        /* ok */
 };
 const struct ui_rect ui_weapons_fuel = {391, 381, 236, 30};
 
