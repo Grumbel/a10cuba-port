@@ -61,6 +61,17 @@ static struct timer timers[MAX_TIMERS];
 static pe32_u32 queue_head, queue_tail;
 #define LB_GETCURSEL_MSG 0x188u
 static int mission_choice = -1, mission_pick = -1;
+#define CB_GETCURSEL_MSG 0x147u
+static int cb_answer[11], cb_next, cb_answers_valid;
+/* Station k's entry index from the native weapons screen. */
+void pe32_wnd_set_station(int k, int index)
+{
+    if (k >= 0 && k < 11) {
+        cb_answer[k] = index;
+        cb_answers_valid = 1;
+        cb_next = 0;
+    }
+}
 static pe32_u32 game_window, focus, active, capture, quit_pending, quit_code;
 static pe32_u32 modal_dialog;
 static int auto_accept;
@@ -262,6 +273,11 @@ static pe32_u32 PE32_WINAPI user_send_message_a(pe32_u32 hwnd, pe32_u32 msg,
     if (!w && msg == LB_GETCURSEL_MSG && mission_pick >= 0) {
         return (pe32_u32)mission_pick;
     }
+    /* OK in the weapons dialog reads the eleven station combos the same way;
+     * answer with the loadout chosen on the native screen. */
+    if (!w && msg == CB_GETCURSEL_MSG && cb_answers_valid) {
+        return (pe32_u32)cb_answer[cb_next++ % 11];
+    }
     return w ? call_proc(w->proc, hwnd, msg, wparam, lparam) : 0;
 }
 
@@ -357,10 +373,23 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
                 if (ui_hook && mission_choice < 0 && windows[k].used &&
                     windows[k].parent == modal_dialog && windows[k].id == 1057) {
                     int r = ui_hook(1, mission_pick >= 0 ? mission_pick : 0);
-                    if (r >= 0) {
+                    if (r >= 0x100) {           /* WEAPONS: open that dialog */
+                        mission_pick = r & 0xff;
+                        cmd = 1057;
+                    } else if (r >= 0) {
                         mission_pick = r;
                     } else if (r == -1) {
                         cmd = 2;                /* IDCANCEL: back to the menu */
+                    }
+                    break;
+                }
+            }
+            for (k = 0; k < 256; k++) {         /* weapons loadout: native screen */
+                if (ui_hook && mission_choice < 0 && windows[k].used &&
+                    windows[k].parent == modal_dialog && windows[k].id == 1025) {
+                    int r = ui_hook(2, mission_pick >= 0 ? mission_pick : 0);
+                    if (r == -1) {
+                        cmd = 2;                /* IDCANCEL: keep the loadout */
                     }
                     break;
                 }

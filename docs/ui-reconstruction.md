@@ -53,10 +53,28 @@ The output is copyrighted and stays in the ignored `data/` directory.
    loadout is read back (station combos, fuel, `.lod` save/load) and how the
    map screen is told which mission to draw.
 
-## Status: mission screen
+## Status
 
-The mission list (dialog 185) is replaced by a native screen
-(`src/ui_layout.c` logic, `src/ui_screens.c` rendering). Keys, gamepad and
-mouse work; the Weapons button is not implemented yet. See
-`docs/launcher.md` for the runner/host protocol. Cancel returns to the main
-menu, which is still auto-driven.
+**Mission screen** (dialog 185): native (`src/ui_layout.c` logic,
+`src/ui_screens.c` rendering). Keys, gamepad and mouse work. Cancel returns
+to the main menu, which is still auto-driven. See `docs/launcher.md` for the
+runner/host protocol.
+
+**Weapons loadout** (dialog 188): native, opened from the mission screen
+(Weapons button, `W`, gamepad Y). Findings:
+
+- `LoadOuts/*.lod` header: 11 bytes of global weapon ids (one per station,
+  symmetric 1 2 3 4 5 6 5 4 3 2 1 pylon types), a little-endian dword of fuel
+  in pounds, then an MFC CString (`0xff`, u16 length) with the briefing text.
+- Global weapon ids match `WEPDESCDS`/`WEP0-17`: 0 empty, 1 AIM-9L, 2 ALQ-119,
+  3-5 AGM-65B/D/E, 6 AGM-88A, 7 Hellfire, 8 HVR pod, 9 Durandal, 10 Mk82,
+  11 Snakeye, 12 Mk82 Paveway, 13 Mk83, 14 Mk83 Paveway, 15 Mk84,
+  16 Mk84 Paveway, 17 Mk20.
+- Each pylon type shows a subset in the order of its `WEPSTAnDS` strip
+  (212x15 entries); the combo item index is the strip entry.
+- The game's OK handler reads the 11 combos with `CB_GETCURSEL` sent to
+  hwnd 0 (the MFC objects are unattached), in station order. The runner answers
+  those from the native screen (`pe32_wnd_set_station`), as it does for the
+  mission list's `LB_GETCURSEL`.
+- Not verified: that the sim really uses the chosen loadout in flight; fuel is
+  shown but not editable, LOAD/SAVE and quantities are not implemented.

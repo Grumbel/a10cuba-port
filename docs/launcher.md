@@ -13,7 +13,11 @@
   `--ui-snapshot FILE` saves the first native frame as BMP and exits.
 - Protocol: the runner writes a frame header with magic `0xa10f0002`
   `{screen, arg}`; the host runs the screen and answers with input record
-  type 7 `{7, screen, value}` (value = list index, -1 cancel, -2 no UI).
+  type 7 `{7, screen, value}` (value = list index, -1 cancel, -2 no UI;
+  0x100|index = open the weapons screen for that list entry). The weapons
+  screen (screen 2) first sends type 7 records `{7, 0x100|station, entry}`
+  for the 11 stations, then `{7, 2, 1}` (OK) or `{7, 2, -1}` (cancel).
+  `--ui-demo SCREEN --mission N` runs one screen without the game.
 - Keyboard input: DirectDraw's `SetCooperativeLevel` window is treated as the
   active, focused application window (`WM_ACTIVATEAPP`, `WM_ACTIVATE`,
   `WM_SETFOCUS` are posted to it) and receives all key and mouse messages,

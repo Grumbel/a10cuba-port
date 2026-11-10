@@ -19,4 +19,15 @@ extern const char *ui_snapshot_path;
 int ui_mission_screen(SDL_Renderer *renderer, const char *ui_dir, int initial,
                       int *value);
 
+/* Read the default loadout of a mission list entry from the game's
+ * LoadOuts directory. Returns 0 on success; on failure sel is all empty. */
+int ui_weapons_default(const char *game_dir, int mission, int sel[11], int *fuel);
+
+/* Weapons loadout: sel[11] are entry indexes per station, edited in place.
+ * Returns 1 when finished (*accepted = 1 for OK, 0 for cancel), 0 if the
+ * window was closed, -1 if the assets are missing. */
+int ui_weapons_screen(SDL_Renderer *renderer, const char *ui_dir,
+                      const char *game_dir, int mission, int sel[11],
+                      int *fuel, int *accepted);
+
 #endif

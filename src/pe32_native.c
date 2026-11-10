@@ -811,6 +811,10 @@ static void host_input_poll(void)
     }
     while ((n = syscall3(SYS_READ, (u32)input_fd, (u32)rec, sizeof rec)) >= 16) {
         for (i = 0; i + 16 <= n; i += 16) {
+            if (rec[i / 4] == 7 && (rec[i / 4 + 1] & 0x100)) {
+                pe32_wnd_set_station((s32)(rec[i / 4 + 1] & 0xff), (s32)rec[i / 4 + 2]);
+                continue;
+            }
             if (rec[i / 4] == 7) {          /* native screen result */
                 ui_result = (s32)rec[i / 4 + 2];
                 ui_ready = 1;

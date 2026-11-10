@@ -28,6 +28,8 @@ void pe32_wnd_set_mission(int index);
  * -1 cancelled, -2 no native screen available). */
 typedef int (*pe32_wnd_ui_fn)(int screen, int arg);
 void pe32_wnd_set_ui(pe32_wnd_ui_fn ui);
+/* Weapon entry index chosen for station k (0..10) on the native screen. */
+void pe32_wnd_set_station(int k, int index);
 int pe32_wnd_listbox_count(pe32_u32 hwnd);
 void pe32_wnd_listbox_select(pe32_u32 hwnd, int index);
 

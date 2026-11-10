@@ -203,6 +203,7 @@ int main(int argc, char **argv)
     const char *game_dir = getenv("A10_CUBA_DATA_DIR");
     const char *snapshot = NULL;
     const char *ui_dir = getenv("A10_CUBA_UI_DIR");
+    int ui_demo = 0;
     int mission = 0, use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
     int frame_pipe[2], input_pipe[2], audio_pipe[2];
     SDL_AudioStream *audio = NULL;
@@ -226,11 +227,34 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mission") && i + 1 < argc) mission = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ui-snapshot") && i + 1 < argc) ui_snapshot_path = argv[++i];
+        else if (!strcmp(argv[i], "--ui-demo") && i + 1 < argc) ui_demo = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ui-dir") && i + 1 < argc) ui_dir = argv[++i];
         else return usage(argv[0]);
     }
     if (scale < 1) scale = 1;
     if (mission < 0) return usage(argv[0]);
+    if (ui_demo && ui_dir) {
+        /* Test aid: run one native screen without the game (--ui-demo
+         * SCREEN, with --mission as its argument). */
+        SDL_Window *w;
+        SDL_Renderer *r;
+        int value = 0, sel[UI_STATIONS], fuel = 0, accepted = 0, rc = 1;
+        if (!SDL_Init(SDL_INIT_VIDEO) ||
+            !(w = SDL_CreateWindow("A-10 Cuba!", 640 * scale, 480 * scale, 0)) ||
+            !(r = SDL_CreateRenderer(w, NULL))) {
+            fprintf(stderr, "SDL: %s\n", SDL_GetError());
+            return 1;
+        }
+        SDL_SetRenderLogicalPresentation(r, 640, 480, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        if (ui_demo == UI_SCREEN_WEAPONS) {
+            ui_weapons_default(game_dir, mission, sel, &fuel);
+            rc = ui_weapons_screen(r, ui_dir, game_dir, mission, sel, &fuel, &accepted);
+        } else {
+            rc = ui_mission_screen(r, ui_dir, mission, &value);
+        }
+        printf("screen %d rc=%d value=%d accepted=%d\n", ui_demo, rc, value, accepted);
+        return rc == 1 ? 0 : 1;
+    }
 
     if (pipe(frame_pipe) < 0 || pipe2(input_pipe, O_NONBLOCK) < 0 ||
         pipe2(audio_pipe, O_NONBLOCK) < 0) {
@@ -388,8 +412,32 @@ int main(int argc, char **argv)
                 SDL_SetRenderLogicalPresentation(renderer, 640, 480,
                                                  SDL_LOGICAL_PRESENTATION_LETTERBOX);
             }
-            got = header[1] == UI_SCREEN_MISSIONS && ui_dir
-                ? ui_mission_screen(renderer, ui_dir, (int)header[2], &value) : -1;
+            got = -1;
+            if (header[1] == UI_SCREEN_MISSIONS && ui_dir) {
+                got = ui_mission_screen(renderer, ui_dir, (int)header[2], &value);
+            } else if (header[1] == UI_SCREEN_WEAPONS && ui_dir) {
+                static int sel[UI_STATIONS], fuel, loaded = -1;
+                int accepted = 0, k, backup[UI_STATIONS], backup_fuel;
+                if (loaded != (int)header[2]) {     /* new mission: its default */
+                    ui_weapons_default(game_dir, (int)header[2], sel, &fuel);
+                    loaded = (int)header[2];
+                }
+                memcpy(backup, sel, sizeof backup);
+                backup_fuel = fuel;
+                got = ui_weapons_screen(renderer, ui_dir, game_dir, (int)header[2],
+                                        sel, &fuel, &accepted);
+                if (got > 0 && !accepted) {
+                    memcpy(sel, backup, sizeof sel);
+                    fuel = backup_fuel;
+                }
+                if (got > 0) {
+                    for (k = 0; k < UI_STATIONS; k++) {
+                        send_input(input_pipe[1], INPUT_UI_RESULT, 0x100u | (uint32_t)k,
+                                   (uint32_t)sel[k]);
+                    }
+                    value = accepted ? 1 : -1;
+                }
+            }
             if (got == 0) {
                 status = 0;
                 break;
