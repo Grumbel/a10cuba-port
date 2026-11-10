@@ -12,7 +12,7 @@ mkdir -p "$(dirname -- "$output")"
 # This is intentionally Linux/i386 only, not a 64-bit PE interpreter.
 "${CC:-gcc}" -m32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
     -fno-builtin -fno-stack-protector -fno-pie -fno-pic \
-    -fomit-frame-pointer -nostdlib -static -no-pie \
+    -fomit-frame-pointer -mincoming-stack-boundary=2 -nostdlib -static -no-pie \
     -Wl,-e,_start -Wl,--build-id=none \
     "$repo_dir/src/pe32_start.S" "$repo_dir/src/pe32_native.c" \
     "$repo_dir/src/pe32_link.c" "$repo_dir/src/pe32_win32.c" \
