@@ -830,8 +830,10 @@ static void test_win32_readonly_game_files(void)
                                     0, 2, 0, 0) == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_create_file_a("Media/Gear.wav", 0, 1,
                                     0, 3, 0x40000000u, 0) == PE32_INVALID_HANDLE_VALUE);
+    /* A non-null SECURITY_ATTRIBUTES (as MFC passes) is ignored, not an error;
+     * a template file handle is still rejected. */
     assert(pe32_win32_create_file_a("Media/Gear.wav", 0, 1,
-                                    (void *)1, 3, 0, 0) == PE32_INVALID_HANDLE_VALUE);
+                                    0, 3, 0, 1) == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_create_file_a("missing.dat", 0, 1, 0, 3, 0, 0)
            == PE32_INVALID_HANDLE_VALUE);
     assert(pe32_win32_get_last_error() == 2);

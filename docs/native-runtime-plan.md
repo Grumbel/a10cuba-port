@@ -326,3 +326,22 @@ instruction execution speed.
   [interface-tracing](interface-tracing.md),
   [graphics-tracing](graphics-tracing.md),
   [Wine baseline](wine-baseline.md).
+
+## Status: SDL window reaches the cockpit
+
+`scripts/a10cuba-sdl.sh` builds the freestanding i386 runner and the 64-bit SDL3
+host (`src/sdl_host.c`). The host forks `qemu-i386 build/a10-pe32-native ...
+--frame-fd 3 --input-fd 4`; the runner writes each primary-surface present as
+`{0xa10f0001, w, h, palette[1024], pixels[w*h]}` and reads `{type, a, b, 0}`
+input records (key VK state, cursor position, mouse buttons). With
+`--auto-accept` the runner clicks MAINMISSION and accepts the mission dialog, so
+the game loads the training mission and renders the cockpit
+(`--max-frames N --snapshot out.bmp` verifies this under `SDL_VIDEODRIVER=dummy`).
+
+Implemented for this: real SEH dispatch (`RaiseException`/`RtlUnwind` walk the
+`fs:0` chain; MFC's C++ throw/catch works), `DllMain(DLL_PROCESS_ATTACH)` for
+`A10Sim.dll`, `wsprintfA`, DLGTEMPLATEEX parsing, and input state behind
+`GetAsyncKeyState`/`GetKeyState`/`GetCursorPos`.
+
+Known gaps: audio is silent, DirectPlay and joystick calls are stubs, hardware
+exceptions are not delivered to SEH handlers, and the dialog UI is auto-driven.

@@ -114,13 +114,54 @@ pe32_u32 PE32_WINAPI pe32_user_get_sys_color(pe32_u32 index)
     return index < sizeof colors / sizeof colors[0] ? colors[index] : 0;
 }
 
+/* Host input: the runner forwards keyboard and mouse state from the SDL
+ * front end; polling is hooked in so the guest always sees fresh state. */
+static unsigned char key_down[256];
+static int cursor_x = 320, cursor_y = 240;
+static pe32_user_input_poll_fn input_poll;
+
+void pe32_user_set_input_poll(pe32_user_input_poll_fn poll) { input_poll = poll; }
+
+void pe32_user_poll_input(void)
+{
+    if (input_poll) {
+        input_poll();
+    }
+}
+
+void pe32_user_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b)
+{
+    if (type == PE32_INPUT_KEY && a < 256) {
+        key_down[a] = b != 0;
+    } else if (type == PE32_INPUT_MOVE) {
+        cursor_x = (int)a;
+        cursor_y = (int)b;
+    } else if (type == PE32_INPUT_BUTTON && a < 256) {
+        key_down[a] = b != 0;           /* VK_LBUTTON, VK_RBUTTON, VK_MBUTTON */
+    }
+}
+
 pe32_u32 PE32_WINAPI pe32_user_get_cursor_pos(pe32_u32 *point)
 {
+    pe32_user_poll_input();
     if (point) {
-        point[0] = 320;
-        point[1] = 240;
+        point[0] = (pe32_u32)cursor_x;
+        point[1] = (pe32_u32)cursor_y;
     }
     return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_user_set_cursor_pos(pe32_u32 x, pe32_u32 y)
+{
+    cursor_x = (int)x;
+    cursor_y = (int)y;
+    return 1;
+}
+
+pe32_u32 PE32_WINAPI pe32_user_get_key_state(pe32_u32 vk)
+{
+    pe32_user_poll_input();
+    return vk < 256 && key_down[vk] ? 0x8000u : 0;
 }
 
 pe32_u32 PE32_WINAPI pe32_user_get_dc(pe32_u32 window)
@@ -302,6 +343,9 @@ enum pe32_link_status pe32_user_resolve(const char *name, pe32_u32 *address)
     EXPOSE_USER("GetSystemMetrics", pe32_user_get_system_metrics)
     EXPOSE_USER("GetSysColor", pe32_user_get_sys_color)
     EXPOSE_USER("GetCursorPos", pe32_user_get_cursor_pos)
+    EXPOSE_USER("SetCursorPos", pe32_user_set_cursor_pos)
+    EXPOSE_USER("GetAsyncKeyState", pe32_user_get_key_state)
+    EXPOSE_USER("GetKeyState", pe32_user_get_key_state)
     EXPOSE_USER("GetDC", pe32_user_get_dc)
     EXPOSE_USER("ReleaseDC", pe32_user_release_dc)
     EXPOSE_USER("LoadCursorA", pe32_user_load_handle)

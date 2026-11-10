@@ -348,6 +348,7 @@ static pe32_u32 PE32_WINAPI user_get_message_a(pe32_u32 *dst, pe32_u32 hwnd,
             pe32_wnd_post(modal_dialog, WM_COMMAND, cmd, 0);
             continue;
         }
+        pe32_user_poll_input();
         if (idle_hook) {
             idle_hook(10);
         } else {

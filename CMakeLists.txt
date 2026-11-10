@@ -13,6 +13,11 @@ target_compile_features(a10-bitmap-viewer PRIVATE c_std_11)
 target_compile_options(a10-bitmap-viewer PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(a10-bitmap-viewer PRIVATE a10-indexed-surface)
 
+add_executable(a10-sdl-host src/sdl_host.c)
+target_compile_features(a10-sdl-host PRIVATE c_std_11)
+target_compile_options(a10-sdl-host PRIVATE -Wall -Wextra)
+target_link_libraries(a10-sdl-host PRIVATE SDL3::SDL3)
+
 # Portable PE32 import/export resolution, also linked into the freestanding
 # i386 runner by scripts/build-native-pe32.sh (no SDL or libc dependency).
 add_library(a10-pe32-link STATIC src/pe32_link.c src/pe32_win32.c src/pe32_heap.c src/pe32_io.c src/pe32_proc.c src/pe32_text.c src/pe32_res.c src/pe32_misc.c src/pe32_winmm.c src/pe32_sys.c src/pe32_stubs.c src/pe32_user.c src/pe32_wnd.c src/pe32_ddraw.c src/pe32_dsound.c)

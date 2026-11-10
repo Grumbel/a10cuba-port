@@ -19,6 +19,7 @@
 #include "pe32_winmm.h"
 #include "pe32_io.h"
 #include "pe32_stubs.h"
+#include "pe32_user.h"
 #include "pe32_wnd.h"
 #include "pe32_ddraw.h"
 
@@ -792,6 +793,52 @@ static void dump_frame(const struct pe32_ddraw_frame *frame)
     syscall3(SYS_CLOSE, (u32)fd, 0, 0);
 }
 
+/* SDL front end link: frames go out on frame_fd as {magic, width, height,
+ * palette[256*4], pixels[width*height]}; input records {type, a, b, 0} arrive
+ * on the non-blocking input_fd. */
+static s32 frame_fd = -1, input_fd = -1;
+
+static void host_input_poll(void)
+{
+    u32 rec[4 * 16];
+    s32 n, i;
+    if (input_fd < 0) {
+        return;
+    }
+    while ((n = syscall3(SYS_READ, (u32)input_fd, (u32)rec, sizeof rec)) >= 16) {
+        for (i = 0; i + 16 <= n; i += 16) {
+            pe32_user_input_event(rec[i / 4], rec[i / 4 + 1], rec[i / 4 + 2]);
+        }
+    }
+}
+
+static void host_present(const struct pe32_ddraw_frame *frame)
+{
+    u32 header[3], y;
+    static unsigned char palette[1024];
+    header[0] = 0xa10f0001u;
+    header[1] = frame->width;
+    header[2] = frame->height;
+    for (y = 0; y < 1024; y++) {
+        palette[y] = frame->palette ? frame->palette[y] : (unsigned char)(y / 4);
+    }
+    write_all(frame_fd, header, sizeof header);
+    write_all(frame_fd, palette, sizeof palette);
+    for (y = 0; y < frame->height; y++) {
+        write_all(frame_fd, frame->pixels + y * frame->pitch, frame->width);
+    }
+    host_input_poll();
+}
+
+static u32 parse_number(const char *s)
+{
+    u32 v = 0;
+    while (*s >= '0' && *s <= '9') {
+        v = v * 10 + (u32)(*s++ - '0');
+    }
+    return v;
+}
+
 static void stub_report(const char *dll, const char *name)
 {
     print_error("stub called: ");
@@ -813,8 +860,8 @@ int pe32_main(int argc, char **argv)
                              seek_game_fd, size_game_fd);
     pe32_io_set_stat_backend(stat_game_fd);
     pe32_io_set_directory_backend(open_game_directory, next_game_directory);
-    if (argc < 2 || argc > 8) {
-        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM]\n");
+    if (argc < 2 || argc > 12) {
+        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM] [--frame-fd N] [--input-fd N]\n");
         return 2;
     }
     for (i = 1; i < argc; ++i) {
@@ -826,6 +873,12 @@ int pe32_main(int argc, char **argv)
         } else if (strings_equal(argv[i], "--dump-frame") && i + 1 < argc) {
             dump_frame_path = argv[++i];
             pe32_ddraw_set_present(dump_frame);
+        } else if (strings_equal(argv[i], "--frame-fd") && i + 1 < argc) {
+            frame_fd = (s32)parse_number(argv[++i]);
+            pe32_ddraw_set_present(host_present);
+        } else if (strings_equal(argv[i], "--input-fd") && i + 1 < argc) {
+            input_fd = (s32)parse_number(argv[++i]);
+            pe32_user_set_input_poll(host_input_poll);
         } else if (strings_equal(argv[i], "--link")) {
             link = 1;
         } else if (argv[i][0] == '-' || module_count == 2) {
