@@ -248,6 +248,8 @@ A-10 code execution or SDL3 game output is claimed.
   `GetTimeZoneInformation` (shift-subtract 64-bit division, no libgcc), read-
   only `OpenFile`/`_lclose`/`_llseek`, global atoms, discarded
   `WritePrivateProfileStringA`, volume info and lock/EOF stubs.
+- `src/pe32_sys.c`: inert ADVAPI32 registry (opens/queries report not found,
+  creates/sets are discarded), COMDLG32 (dialogs cancel) and SHELL32 drag stubs.
 - `src/pe32_winmm.c`: all five WINMM imports (`timeGetTime` via
   `clock_gettime`; joysticks report unplugged; `PlaySoundA` is silent).
 

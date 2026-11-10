@@ -7,6 +7,7 @@
 #include "pe32_res.h"
 #include "pe32_misc.h"
 #include "pe32_winmm.h"
+#include "pe32_sys.h"
 #include "pe32_heap.h"
 #include "pe32_io.h"
 
@@ -469,7 +470,7 @@ enum pe32_link_status pe32_win32_resolve_import(
         return pe32_winmm_resolve(name, address);
     }
     if (!equal_ascii_ci(dll, "KERNEL32.dll")) {
-        return PE32_LINK_MISSING;
+        return pe32_sys_resolve(dll, name, address);
     }
 #define EXPOSE_KERNEL32(legacy_name, implementation) \
     if (equal_ascii(name, legacy_name)) { \

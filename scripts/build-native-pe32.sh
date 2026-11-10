@@ -16,5 +16,5 @@ mkdir -p "$(dirname -- "$output")"
     -Wl,-e,_start -Wl,--build-id=none \
     "$repo_dir/src/pe32_start.S" "$repo_dir/src/pe32_native.c" \
     "$repo_dir/src/pe32_link.c" "$repo_dir/src/pe32_win32.c" \
-    "$repo_dir/src/pe32_heap.c" "$repo_dir/src/pe32_io.c" "$repo_dir/src/pe32_proc.c" "$repo_dir/src/pe32_text.c" "$repo_dir/src/pe32_res.c" "$repo_dir/src/pe32_misc.c" "$repo_dir/src/pe32_winmm.c" -o "$output"
+    "$repo_dir/src/pe32_heap.c" "$repo_dir/src/pe32_io.c" "$repo_dir/src/pe32_proc.c" "$repo_dir/src/pe32_text.c" "$repo_dir/src/pe32_res.c" "$repo_dir/src/pe32_misc.c" "$repo_dir/src/pe32_winmm.c" "$repo_dir/src/pe32_sys.c" -o "$output"
 printf 'Built %s\n' "$output"

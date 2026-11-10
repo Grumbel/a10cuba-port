@@ -15,7 +15,7 @@ target_link_libraries(a10-bitmap-viewer PRIVATE a10-indexed-surface)
 
 # Portable PE32 import/export resolution, also linked into the freestanding
 # i386 runner by scripts/build-native-pe32.sh (no SDL or libc dependency).
-add_library(a10-pe32-link STATIC src/pe32_link.c src/pe32_win32.c src/pe32_heap.c src/pe32_io.c src/pe32_proc.c src/pe32_text.c src/pe32_res.c src/pe32_misc.c src/pe32_winmm.c)
+add_library(a10-pe32-link STATIC src/pe32_link.c src/pe32_win32.c src/pe32_heap.c src/pe32_io.c src/pe32_proc.c src/pe32_text.c src/pe32_res.c src/pe32_misc.c src/pe32_winmm.c src/pe32_sys.c)
 target_compile_features(a10-pe32-link PRIVATE c_std_11)
 target_compile_options(a10-pe32-link PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(a10-pe32-link PUBLIC src)
@@ -40,6 +40,9 @@ if(BUILD_TESTING)
     add_executable(test-pe32-winmm tests/test_pe32_winmm.c)
     target_link_libraries(test-pe32-winmm PRIVATE a10-pe32-link)
     add_test(NAME pe32-winmm COMMAND test-pe32-winmm)
+    add_executable(test-pe32-sys tests/test_pe32_sys.c)
+    target_link_libraries(test-pe32-sys PRIVATE a10-pe32-link)
+    add_test(NAME pe32-sys COMMAND test-pe32-sys)
     add_executable(test-indexed-surface tests/test_indexed_surface.c)
     target_compile_features(test-indexed-surface PRIVATE c_std_11)
     target_compile_options(test-indexed-surface PRIVATE -Wall -Wextra -Wpedantic)
