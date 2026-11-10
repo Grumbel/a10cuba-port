@@ -7,6 +7,8 @@
 
 #define _GNU_SOURCE
 #include <SDL3/SDL.h>
+
+#include "gamepad_map.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -17,7 +19,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-enum { INPUT_KEY = 1, INPUT_MOVE = 2, INPUT_BUTTON = 3, MAX_FRAME = 4096 };
+enum {
+    INPUT_KEY = 1, INPUT_MOVE = 2, INPUT_BUTTON = 3,
+    INPUT_JOY_AXIS = 4, INPUT_JOY_BUTTON = 5, INPUT_JOY_PRESENT = 6,
+    MAX_FRAME = 4096
+};
 
 static int read_full(int fd, void *buffer, size_t size)
 {
@@ -77,6 +83,105 @@ static void send_input(int fd, uint32_t type, uint32_t a, uint32_t b)
     }
 }
 
+
+/* SDL gamepad bridge: sticks become joystick axes, buttons become keys. */
+struct pad_state {
+    SDL_Gamepad *pad;
+    int input_fd;
+    int lb, rb;
+    unsigned held_vk[GP_BUTTON_COUNT];   /* key sent for each held button */
+    unsigned throttle_vk;                /* +/- key held by the right stick */
+};
+
+static int pad_button_from_sdl(int button)
+{
+    switch (button) {
+    case SDL_GAMEPAD_BUTTON_SOUTH: return GP_A;
+    case SDL_GAMEPAD_BUTTON_EAST: return GP_B;
+    case SDL_GAMEPAD_BUTTON_WEST: return GP_X;
+    case SDL_GAMEPAD_BUTTON_NORTH: return GP_Y;
+    case SDL_GAMEPAD_BUTTON_BACK: return GP_BACK;
+    case SDL_GAMEPAD_BUTTON_START: return GP_START;
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK: return GP_LSTICK;
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return GP_RSTICK;
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return GP_LB;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return GP_RB;
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return GP_DUP;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return GP_DDOWN;
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return GP_DLEFT;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return GP_DRIGHT;
+    default: return -1;
+    }
+}
+
+static void pad_press(struct pad_state *st, int button, int down)
+{
+    if (button == GP_LB) { st->lb = down; return; }
+    if (button == GP_RB) { st->rb = down; return; }
+    if (down) {
+        unsigned vk = gamepad_vk(button, st->lb, st->rb);
+        if (!vk || st->held_vk[button]) return;
+        st->held_vk[button] = vk;
+        send_input(st->input_fd, INPUT_KEY, vk, 1);
+    } else if (st->held_vk[button]) {
+        send_input(st->input_fd, INPUT_KEY, st->held_vk[button], 0);
+        st->held_vk[button] = 0;
+    }
+    if (button == GP_RT || button == GP_LT) {
+        send_input(st->input_fd, INPUT_JOY_BUTTON, button == GP_RT ? 0 : 1, (uint32_t)down);
+    }
+}
+
+static uint32_t pad_axis_value(Sint16 v)
+{
+    return (uint32_t)((int)v + 32768);
+}
+
+static void pad_axis(struct pad_state *st, int axis, Sint16 value)
+{
+    switch (axis) {
+    case SDL_GAMEPAD_AXIS_LEFTX:
+        send_input(st->input_fd, INPUT_JOY_AXIS, 0, pad_axis_value(value)); break;
+    case SDL_GAMEPAD_AXIS_LEFTY:
+        send_input(st->input_fd, INPUT_JOY_AXIS, 1, pad_axis_value(value)); break;
+    case SDL_GAMEPAD_AXIS_RIGHTX:
+        send_input(st->input_fd, INPUT_JOY_AXIS, 3, pad_axis_value(value)); break;
+    case SDL_GAMEPAD_AXIS_RIGHTY: {
+        unsigned vk = value < -16000 ? 0x6b : value > 16000 ? 0x6d : 0; /* KP + / - */
+        if (vk != st->throttle_vk) {
+            if (st->throttle_vk) send_input(st->input_fd, INPUT_KEY, st->throttle_vk, 0);
+            if (vk) send_input(st->input_fd, INPUT_KEY, vk, 1);
+            st->throttle_vk = vk;
+        }
+        break;
+    }
+    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
+        pad_press(st, GP_LT, value > 16000); break;
+    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
+        pad_press(st, GP_RT, value > 16000); break;
+    default: break;
+    }
+}
+
+static void pad_open(struct pad_state *st, SDL_JoystickID id)
+{
+    if (st->pad) return;
+    st->pad = SDL_OpenGamepad(id);
+    if (st->pad) send_input(st->input_fd, INPUT_JOY_PRESENT, 1, 0);
+}
+
+static void pad_close(struct pad_state *st, SDL_JoystickID id)
+{
+    int b;
+    if (!st->pad || SDL_GetGamepadID(st->pad) != id) return;
+    for (b = 0; b < GP_BUTTON_COUNT; b++) pad_press(st, b, 0);
+    pad_axis(st, SDL_GAMEPAD_AXIS_RIGHTY, 0);
+    SDL_CloseGamepad(st->pad);
+    st->pad = NULL;
+    st->lb = st->rb = 0;
+    send_input(st->input_fd, INPUT_JOY_PRESENT, 0, 0);
+}
+
 static int usage(const char *program)
 {
     fprintf(stderr,
@@ -96,6 +201,7 @@ int main(int argc, char **argv)
     int use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
     int frame_pipe[2], input_pipe[2];
     pid_t child;
+    struct pad_state pad = {0};
     SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
     SDL_Texture *texture = NULL;
@@ -160,9 +266,16 @@ int main(int argc, char **argv)
     close(frame_pipe[1]);
     close(input_pipe[0]);
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         goto done;
+    }
+    pad.input_fd = input_pipe[1];
+    {
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&count);
+        if (ids && count > 0) pad_open(&pad, ids[0]);
+        SDL_free(ids);
     }
     for (;;) {
         uint32_t header[3];
@@ -173,7 +286,19 @@ int main(int argc, char **argv)
                 status = 0;
                 goto done;
             }
-            if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+            if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+                pad_open(&pad, event.gdevice.which);
+            } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                pad_close(&pad, event.gdevice.which);
+            } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                       event.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+                int button = pad_button_from_sdl(event.gbutton.button);
+                if (button >= 0) {
+                    pad_press(&pad, button, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+                }
+            } else if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                pad_axis(&pad, event.gaxis.axis, event.gaxis.value);
+            } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                 unsigned vk = virtual_key(event.key.key);
                 if (vk) {
                     send_input(input_pipe[1], INPUT_KEY, vk, event.type == SDL_EVENT_KEY_DOWN);
@@ -251,6 +376,7 @@ int main(int argc, char **argv)
         }
     }
 done:
+    if (pad.pad) SDL_CloseGamepad(pad.pad);
     kill(child, SIGTERM);
     waitpid(child, NULL, 0);
     free(pixels); free(rgba);

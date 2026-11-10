@@ -10,9 +10,14 @@
 typedef pe32_u32 (*pe32_winmm_clock_fn)(void);
 void pe32_winmm_set_clock(pe32_winmm_clock_fn clock);
 
-/* WINMM subset imported by the EXE. Joysticks report "unplugged" until the
- * SDL3 input bridge exists; PlaySound reports success without audio. */
+/* Joystick events from the host (input record types 4-6). Joystick 0 reports
+ * "unplugged" until the host announces a gamepad. */
+enum { PE32_WINMM_AXIS = 4, PE32_WINMM_BUTTON = 5, PE32_WINMM_PRESENT = 6 };
+void pe32_winmm_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b);
+
+/* WINMM subset imported by the EXE. PlaySound reports success without audio. */
 pe32_u32 PE32_WINAPI pe32_win32_time_get_time(void);
+pe32_u32 PE32_WINAPI pe32_win32_joy_get_num_devs(void);
 pe32_u32 PE32_WINAPI pe32_win32_joy_get_pos(pe32_u32 id, void *info);
 pe32_u32 PE32_WINAPI pe32_win32_joy_get_pos_ex(pe32_u32 id, void *info);
 pe32_u32 PE32_WINAPI pe32_win32_joy_get_dev_caps_a(pe32_u32 id, void *caps,

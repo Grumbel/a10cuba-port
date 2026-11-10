@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "pe32_user.h"
+#include "pe32_winmm.h"
 #include "pe32_res.h"
 
 enum { HOOK_TYPES = 16, HOOK_BASE = 0x00a10000, MESSAGE_BASE = 0xc000 };
@@ -138,6 +139,8 @@ void pe32_user_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b)
         cursor_y = (int)b;
     } else if (type == PE32_INPUT_BUTTON && a < 256) {
         key_down[a] = b != 0;           /* VK_LBUTTON, VK_RBUTTON, VK_MBUTTON */
+    } else if (type >= PE32_WINMM_AXIS && type <= PE32_WINMM_PRESENT) {
+        pe32_winmm_input_event(type, a, b);
     }
 }
 
