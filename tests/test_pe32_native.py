@@ -660,6 +660,7 @@ class HostLinkerTests(unittest.TestCase):
                 str(ROOT / 'src/pe32_misc.c'),
                 str(ROOT / 'src/pe32_winmm.c'),
                 str(ROOT / 'src/pe32_sys.c'),
+                str(ROOT / 'src/pe32_user.c'),
                 str(ROOT / 'src/pe32_stubs.c'),
                 str(ROOT / 'tests/test_pe32_link.c'), '-o', str(runner)],
                 capture_output=True, text=True, check=False)
@@ -779,6 +780,7 @@ class OriginalDiscTests(unittest.TestCase):
                 str(ROOT / 'src/pe32_misc.c'),
                 str(ROOT / 'src/pe32_winmm.c'),
                 str(ROOT / 'src/pe32_sys.c'),
+                str(ROOT / 'src/pe32_user.c'),
                 str(ROOT / 'src/pe32_stubs.c'), '-o', str(library)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
