@@ -11,6 +11,8 @@
 #include "pe32_stubs.h"
 #include "pe32_user.h"
 #include "pe32_wnd.h"
+#include "pe32_ddraw.h"
+#include "pe32_dsound.h"
 #include "pe32_heap.h"
 #include "pe32_io.h"
 
@@ -478,6 +480,14 @@ enum pe32_link_status pe32_win32_resolve_import(
     if (equal_ascii_ci(dll, "USER32.dll") &&
         (pe32_user_resolve(name, address) == PE32_LINK_OK ||
          pe32_wnd_resolve(name, address) == PE32_LINK_OK)) {
+        return PE32_LINK_OK;
+    }
+    if (equal_ascii_ci(dll, "DDRAW.dll") &&
+        pe32_ddraw_resolve(name, address) == PE32_LINK_OK) {
+        return PE32_LINK_OK;
+    }
+    if (equal_ascii_ci(dll, "DSOUND.dll") &&
+        pe32_dsound_resolve(name, address) == PE32_LINK_OK) {
         return PE32_LINK_OK;
     }
     if (!equal_ascii_ci(dll, "KERNEL32.dll")) {

@@ -6,6 +6,10 @@
 #include "pe32_winmm.h"
 #include "pe32_proc.h"
 
+/* On non-i386 hosts the resolver table is compiled out, leaving the
+ * implementations unreferenced; they are still built to catch errors. */
+#pragma GCC diagnostic ignored "-Wunused-function"
+
 enum {
     MAX_WINDOWS = 256, MAX_CLASSES = 64, MAX_QUEUE = 512, MAX_TIMERS = 32,
     MAX_PROPS = 8, HWND_BASE = 0x00020000, TEXT_MAX = 128,
@@ -486,6 +490,7 @@ static pe32_u32 create_window(pe32_u32 exstyle, const char *cls, const char *tit
     if (hook) {
         cbt[0] = (pe32_u32)(unsigned long)cs;
         cbt[1] = 0;
+        (void)cbt;
 #if defined(__i386__)
         if (((hookproc_fn)(unsigned long)hook)(HCBT_CREATEWND, hwnd,
                                                (pe32_u32)(unsigned long)cbt)) {

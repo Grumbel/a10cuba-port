@@ -12,6 +12,9 @@
 typedef void (*pe32_stub_log_fn)(const char *dll, const char *name);
 void pe32_stubs_set_logger(pe32_stub_log_fn logger);
 
+/* Report a call to a partially implemented interface through the logger. */
+void pe32_stubs_report(const char *dll, const char *name);
+
 pe32_u32 pe32_stubs_count(void);
 const char *pe32_stubs_name(pe32_u32 index, const char **dll,
                             pe32_u32 *arguments);
