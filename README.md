@@ -2,6 +2,28 @@
 
 This project is an initial investigation toward a native Linux port. The original game binaries are 32-bit x86 Windows PE files; a native port requires substantial reverse engineering and replacement of Windows APIs. There is no runnable Linux port yet.
 
+## Status
+
+There is **no native Linux port yet**. What exists is a reference run under Wine, reverse-engineering tooling and notes, and an early native-loader bootstrap.
+
+**Works**
+
+- Running the original game under Wine through an isolated launcher (`nix run .#a10cuba-wine`); see [launcher notes](docs/launcher.md) and [Wine baseline](docs/wine-baseline.md).
+- Extracting your own disc image into ignored local data (`scripts/extract-disc.sh`).
+- Inspecting PE resources and imports (`tools/pe_resources.py`, `tools/pe32_imports.py`).
+- Mapping the EXE and simulation DLL with the freestanding i386 loader (inspection only).
+- Displaying extracted indexed bitmaps with the SDL3 probe (`a10-bitmap-viewer`).
+- Reading the mission databases (`Missions/*.db`) with `tools/a10db.py`: scene tree, unit placement, per-unit property/loadout tokens and path waypoint scripts. The format is documented in [docs/mission-format.md](docs/mission-format.md); `.lod` loadouts are in [docs/ui-reconstruction.md](docs/ui-reconstruction.md).
+- Unit tests for the Python tools and launcher (`python3 -m unittest discover -s tests -v`). They use synthetic data, not game files.
+
+**Does not work / not done**
+
+- The original game does not run natively: most Windows imports are unresolved, Windows exception handling, threads, DirectDraw, DirectSound and DirectPlay are not implemented, and `--link` is expected to fail.
+- The SDL3 probe is not the game and does not implement the DirectDraw interface.
+- Mission format is only partly understood: position units and axes, the mission-to-`missN` mapping, the footer, vertex scaling and several tokens (`side`, `targets`, `vrandom`, `token`) are unconfirmed; the `.dmo`/`.rec` demo formats are unanalysed. See "Open items" in [docs/mission-format.md](docs/mission-format.md).
+- There is no mission editor, and no writer/repacker for `.db` files yet; a byte-identical round trip must be shown before any editing.
+- Wine is x86-64 Linux only, needs a graphical display, and the game's behaviour under it has not been exhaustively tested.
+
 ## Reference material
 
 - [Original A-10 Cuba! keyboard shortcuts](A-10-Cuba-keyboard-shortcuts.md)
@@ -11,7 +33,7 @@ This project is an initial investigation toward a native Linux port. The origina
 
 ## Development environment
 
-Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to test the PE resource reader.
+Install Nix with flakes enabled, then run `nix develop` from this directory. The shell supplies SDL3, C/C++ build tools, binary inspection tools, Python, and 7-Zip. Ghidra can be used separately to inspect the executable and DLL. There is no native game build yet. Run `python3 -m unittest discover -s tests -v` to run the Python tests.
 
 ## Native PE32 execution bootstrap
 
