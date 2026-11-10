@@ -555,7 +555,9 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertNotIn('mapped=0x08048000', result.stdout)
 
     def test_imports_are_rejected_for_execution(self):
-        result = self.invoke(fixture(imports=True), '--run-entry')
+        # MessageBoxA is a traced stub now; use a name nothing provides.
+        image = fixture(imports=True).replace(b'MessageBoxA\0', b'NoSuchFunc1\0')
+        result = self.invoke(image, '--run-entry')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('module imports not fully resolved', result.stderr)
 
@@ -658,6 +660,7 @@ class HostLinkerTests(unittest.TestCase):
                 str(ROOT / 'src/pe32_misc.c'),
                 str(ROOT / 'src/pe32_winmm.c'),
                 str(ROOT / 'src/pe32_sys.c'),
+                str(ROOT / 'src/pe32_stubs.c'),
                 str(ROOT / 'tests/test_pe32_link.c'), '-o', str(runner)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
@@ -775,7 +778,8 @@ class OriginalDiscTests(unittest.TestCase):
                 str(ROOT / 'src/pe32_res.c'),
                 str(ROOT / 'src/pe32_misc.c'),
                 str(ROOT / 'src/pe32_winmm.c'),
-                str(ROOT / 'src/pe32_sys.c'), '-o', str(library)],
+                str(ROOT / 'src/pe32_sys.c'),
+                str(ROOT / 'src/pe32_stubs.c'), '-o', str(library)],
                 capture_output=True, text=True, check=False)
             self.assertEqual(build.returncode, 0, build.stderr)
             native = ctypes.CDLL(str(library))

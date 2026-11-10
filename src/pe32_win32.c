@@ -8,6 +8,7 @@
 #include "pe32_misc.h"
 #include "pe32_winmm.h"
 #include "pe32_sys.h"
+#include "pe32_stubs.h"
 #include "pe32_heap.h"
 #include "pe32_io.h"
 
@@ -463,14 +464,20 @@ enum pe32_link_status pe32_win32_resolve_import(
         *address = 0;
     }
 #if defined(__i386__)
-    if (!name || !address) {
+    if (!address) {
         return PE32_LINK_MISSING;
+    }
+    if (!name) {
+        return pe32_stubs_resolve(dll, name, ordinal, address);
     }
     if (equal_ascii_ci(dll, "WINMM.dll")) {
         return pe32_winmm_resolve(name, address);
     }
     if (!equal_ascii_ci(dll, "KERNEL32.dll")) {
-        return pe32_sys_resolve(dll, name, address);
+        if (pe32_sys_resolve(dll, name, address) == PE32_LINK_OK) {
+            return PE32_LINK_OK;
+        }
+        return pe32_stubs_resolve(dll, name, ordinal, address);
     }
 #define EXPOSE_KERNEL32(legacy_name, implementation) \
     if (equal_ascii(name, legacy_name)) { \

@@ -18,6 +18,7 @@
 #include "pe32_proc.h"
 #include "pe32_winmm.h"
 #include "pe32_io.h"
+#include "pe32_stubs.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -702,6 +703,15 @@ static void link_report(void *context, const char *dll, const char *name,
     print("\n");
 }
 
+static void stub_report(const char *dll, const char *name)
+{
+    print_error("stub called: ");
+    print_error(dll);
+    print_error("!");
+    print_error(name);
+    print_error("\n");
+}
+
 int pe32_main(int argc, char **argv)
 {
     struct pe32_module modules[2] = { {0}, {0} };
@@ -739,6 +749,7 @@ int pe32_main(int argc, char **argv)
         return 2;
     }
     if (link) {
+        pe32_stubs_set_logger(stub_report);
         pe32_win32_initialize(modules, (u32)module_count);
         for (i = 0; i < module_count; ++i) {
             enum pe32_link_status status;
