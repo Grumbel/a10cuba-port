@@ -5,6 +5,7 @@
 #include "pe32_user.h"
 #include "pe32_winmm.h"
 #include "pe32_proc.h"
+#include "pe32_stubs.h"
 
 /* On non-i386 hosts the resolver table is compiled out, leaving the
  * implementations unreferenced; they are still built to catch errors. */
@@ -899,22 +900,31 @@ static pe32_u32 PE32_WINAPI user_create_dialog_indirect_param_a(
 {
     const unsigned char *p = tpl;
     pe32_u32 style, exstyle, count, hwnd, i, first_control = 0;
-    int x, y, cx, cy;
+    int x, y, cx, cy, extended;
     char title[TEXT_MAX], cls[48], text[TEXT_MAX];
     (void)dlgproc;
     if (!tpl) {
         return 0;
     }
-    style = rd32(p); exstyle = rd32(p + 4); count = rd16(p + 8);
-    x = (short)rd16(p + 10); y = (short)rd16(p + 12);
-    cx = (short)rd16(p + 14); cy = (short)rd16(p + 16);
-    p += 18;
+    /* DLGTEMPLATEEX starts with version 1 and signature 0xffff. */
+    extended = rd16(p) == 1 && rd16(p + 2) == 0xffff;
+    if (extended) {
+        exstyle = rd32(p + 8); style = rd32(p + 12); count = rd16(p + 16);
+        x = (short)rd16(p + 18); y = (short)rd16(p + 20);
+        cx = (short)rd16(p + 22); cy = (short)rd16(p + 24);
+        p += 26;
+    } else {
+        style = rd32(p); exstyle = rd32(p + 4); count = rd16(p + 8);
+        x = (short)rd16(p + 10); y = (short)rd16(p + 12);
+        cx = (short)rd16(p + 14); cy = (short)rd16(p + 16);
+        p += 18;
+    }
     p = skip_sz_or_ordinal(p);          /* menu */
     p = skip_sz_or_ordinal(p);          /* class */
     wide_to_ascii(title, p, sizeof title);
     p = skip_sz_or_ordinal(p);          /* title */
     if (style & 0x40) {                 /* DS_SETFONT */
-        p += 2;
+        p += extended ? 6 : 2;          /* size [+ weight, italic, charset] */
         p = skip_sz_or_ordinal(p);
     }
     /* Dialog units to pixels with the classic 8x16 system font ratio. */
@@ -928,11 +938,19 @@ static pe32_u32 PE32_WINAPI user_create_dialog_indirect_param_a(
         int ix, iy, icx, icy;
         const char *class_name;
         p = align4(tpl, p);
-        istyle = rd32(p); iexstyle = rd32(p + 4);
-        ix = (short)rd16(p + 8); iy = (short)rd16(p + 10);
-        icx = (short)rd16(p + 12); icy = (short)rd16(p + 14);
-        id = rd16(p + 16);
-        p += 18;
+        if (extended) {
+            iexstyle = rd32(p + 4); istyle = rd32(p + 8);
+            ix = (short)rd16(p + 12); iy = (short)rd16(p + 14);
+            icx = (short)rd16(p + 16); icy = (short)rd16(p + 18);
+            id = rd32(p + 20);
+            p += 24;
+        } else {
+            istyle = rd32(p); iexstyle = rd32(p + 4);
+            ix = (short)rd16(p + 8); iy = (short)rd16(p + 10);
+            icx = (short)rd16(p + 12); icy = (short)rd16(p + 14);
+            id = rd16(p + 16);
+            p += 18;
+        }
         if (p[0] == 0xff && p[1] == 0xff) {
             class_name = builtin_class_name(rd16(p + 2));
         } else {
