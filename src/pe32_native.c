@@ -30,7 +30,7 @@ static u32 read32(const u8 *data);
 enum {
     SYS_READ = 3, SYS_WRITE = 4, SYS_OPEN = 5,
     SYS_CLOSE = 6, SYS_LSEEK = 19, SYS_OLD_MMAP = 90, SYS_NANOSLEEP = 162, SYS_CLOCK_GETTIME = 265, SYS_EXIT_GROUP = 252,
-    SYS_MUNMAP = 91, SYS_LLSEEK = 140, SYS_FSTAT64 = 197,
+    SYS_MUNMAP = 91, SYS_SET_THREAD_AREA = 243, SYS_LLSEEK = 140, SYS_FSTAT64 = 197,
     SYS_OPENAT = 295, SYS_GETDENTS64 = 220,
     O_DIRECTORY = 00200000, O_NOFOLLOW = 00400000,
     O_CLOEXEC = 02000000, O_NONBLOCK = 00004000,
@@ -703,6 +703,38 @@ static void link_report(void *context, const char *dll, const char *name,
     print("\n");
 }
 
+/* Windows code addresses its thread block through fs: (SEH chain at fs:0,
+ * stack bounds, self pointer, PEB). Give the guest a minimal one. */
+static u32 fake_teb[1024] __attribute__((aligned(4096)));
+static u32 fake_peb[256] __attribute__((aligned(16)));
+
+static int install_teb(void)
+{
+    struct {
+        u32 entry_number, base_addr, limit, flags;
+    } desc;
+    u32 stack_top;
+    u32 selector;
+    int result;
+    __asm__ volatile("mov %%esp, %0" : "=r"(stack_top));
+    fake_teb[0] = 0xffffffffu;                 /* end of SEH chain */
+    fake_teb[1] = (stack_top + 0xfffu) & ~0xfffu;   /* stack base */
+    fake_teb[2] = stack_top - 0x100000u;       /* stack limit */
+    fake_teb[6] = (u32)fake_teb;               /* NT_TIB.Self */
+    fake_teb[12] = (u32)fake_peb;              /* TEB.ProcessEnvironmentBlock */
+    desc.entry_number = 0xffffffffu;
+    desc.base_addr = (u32)fake_teb;
+    desc.limit = sizeof fake_teb - 1;
+    desc.flags = 1;                            /* seg_32bit, byte granular */
+    result = (int)syscall3(SYS_SET_THREAD_AREA, (u32)&desc, 0, 0);
+    if (result < 0) {
+        return result;
+    }
+    selector = desc.entry_number * 8 + 3;
+    __asm__ volatile("mov %0, %%fs" : : "r"((unsigned short)selector));
+    return 0;
+}
+
 static void stub_report(const char *dll, const char *name)
 {
     print_error("stub called: ");
@@ -779,7 +811,11 @@ int pe32_main(int argc, char **argv)
                 return 1;
             }
         }
-        print("Executing raw x86 entry point (no Windows environment)...\n");
+        if (install_teb() < 0) {
+            print_error("PE32: cannot install thread block\n");
+            return 1;
+        }
+        print("Executing x86 entry point...\n");
         entry_point = (int (*)(void))(modules[0].image + modules[0].entry_rva);
         result = entry_point();
         print("Entry returned ");
