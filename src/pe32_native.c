@@ -19,6 +19,8 @@
 #include "pe32_winmm.h"
 #include "pe32_io.h"
 #include "pe32_stubs.h"
+#include "pe32_wnd.h"
+#include "pe32_ddraw.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -735,6 +737,61 @@ static int install_teb(void)
     return 0;
 }
 
+/* Headless output: write the primary surface as a binary PPM every so often. */
+static const char *dump_frame_path;
+static u32 present_count;
+
+static void write_all(s32 fd, const void *data, u32 size)
+{
+    const char *p = data;
+    while (size) {
+        s32 n = syscall3(SYS_WRITE, (u32)fd, (u32)p, size);
+        if (n <= 0) {
+            return;
+        }
+        p += n;
+        size -= (u32)n;
+    }
+}
+
+static void dump_frame(const struct pe32_ddraw_frame *frame)
+{
+    static unsigned char row[4096 * 3];
+    char header[32];
+    u32 x, y, n = 0, v;
+    s32 fd;
+    if (!dump_frame_path || (present_count++ % 20) != 0 || frame->width > 4096) {
+        return;
+    }
+    fd = syscall3(SYS_OPEN, (u32)dump_frame_path, 0x241, 0644);
+    if (fd < 0) {
+        return;
+    }
+    header[n++] = 'P'; header[n++] = '6'; header[n++] = '\n';
+    for (v = frame->width, x = 1000000; x; x /= 10) {
+        if (v / x || n > 3) { header[n++] = (char)('0' + v / x % 10); }
+    }
+    header[n++] = ' ';
+    for (v = frame->height, x = 1000000, y = n; x; x /= 10) {
+        if (v / x || n > y) { header[n++] = (char)('0' + v / x % 10); }
+    }
+    header[n++] = '\n'; header[n++] = '2'; header[n++] = '5'; header[n++] = '5';
+    header[n++] = '\n';
+    write_all(fd, header, n);
+    for (y = 0; y < frame->height; y++) {
+        for (x = 0; x < frame->width; x++) {
+            u32 idx = frame->pixels[y * frame->pitch + x];
+            const unsigned char *c = frame->palette ? frame->palette + idx * 4
+                                                    : (const unsigned char *)0;
+            row[x * 3] = c ? c[0] : (unsigned char)idx;
+            row[x * 3 + 1] = c ? c[1] : (unsigned char)idx;
+            row[x * 3 + 2] = c ? c[2] : (unsigned char)idx;
+        }
+        write_all(fd, row, frame->width * 3);
+    }
+    syscall3(SYS_CLOSE, (u32)fd, 0, 0);
+}
+
 static void stub_report(const char *dll, const char *name)
 {
     print_error("stub called: ");
@@ -756,14 +813,19 @@ int pe32_main(int argc, char **argv)
                              seek_game_fd, size_game_fd);
     pe32_io_set_stat_backend(stat_game_fd);
     pe32_io_set_directory_backend(open_game_directory, next_game_directory);
-    if (argc < 2 || argc > 5) {
-        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry]\n");
+    if (argc < 2 || argc > 8) {
+        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM]\n");
         return 2;
     }
     for (i = 1; i < argc; ++i) {
         if (strings_equal(argv[i], "--run-entry")) {
             execute = 1;
             link = 1;
+        } else if (strings_equal(argv[i], "--auto-accept")) {
+            pe32_wnd_set_auto_accept(1);
+        } else if (strings_equal(argv[i], "--dump-frame") && i + 1 < argc) {
+            dump_frame_path = argv[++i];
+            pe32_ddraw_set_present(dump_frame);
         } else if (strings_equal(argv[i], "--link")) {
             link = 1;
         } else if (argv[i][0] == '-' || module_count == 2) {

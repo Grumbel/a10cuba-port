@@ -832,8 +832,21 @@ static pe32_u32 PE32_WINAPI user_release_capture(void)
 
 static pe32_u32 PE32_WINAPI user_get_capture(void) { return capture; }
 static pe32_u32 PE32_WINAPI user_get_desktop_window(void) { return HWND_BASE - 4; }
-static pe32_u32 PE32_WINAPI user_return_one(void) { return 1; }
-static pe32_u32 PE32_WINAPI user_return_zero(void) { return 0; }
+/* stdcall callee pops its arguments, so constant-returning stubs must declare
+ * the exact parameter count of the API they stand in for. */
+static pe32_u32 PE32_WINAPI user_one_arg_one(pe32_u32 a) { (void)a; return 1; }
+static pe32_u32 PE32_WINAPI user_one_arg_zero(pe32_u32 a) { (void)a; return 0; }
+static pe32_u32 PE32_WINAPI user_two_args_one(pe32_u32 a, pe32_u32 b)
+{
+    (void)a; (void)b;
+    return 1;
+}
+static pe32_u32 PE32_WINAPI user_three_args_one(pe32_u32 a, pe32_u32 b,
+                                                pe32_u32 c)
+{
+    (void)a; (void)b; (void)c;
+    return 1;
+}
 
 /* ---- dialogs ---------------------------------------------------------- */
 
@@ -1086,7 +1099,7 @@ enum pe32_link_status pe32_wnd_resolve(const char *name, pe32_u32 *address)
     E("SetActiveWindow", user_set_active_window)
     E("GetActiveWindow", user_get_active_window)
     E("GetForegroundWindow", user_get_active_window)
-    E("SetForegroundWindow", user_return_one)
+    E("SetForegroundWindow", user_one_arg_one)
     E("GetLastActivePopup", user_get_parent)
     E("SetCapture", user_set_capture)
     E("ReleaseCapture", user_release_capture)
@@ -1103,12 +1116,12 @@ enum pe32_link_status pe32_wnd_resolve(const char *name, pe32_u32 *address)
     E("PtInRect", user_pt_in_rect)
     E("ClientToScreen", user_client_to_screen)
     E("ScreenToClient", user_screen_to_client)
-    E("InvalidateRect", user_return_one)
-    E("UpdateWindow", user_return_one)
-    E("ValidateRect", user_return_one)
-    E("IsIconic", user_return_zero)
-    E("ShowCursor", user_return_one)
-    E("SetCursor", user_return_zero)
+    E("InvalidateRect", user_three_args_one)
+    E("UpdateWindow", user_one_arg_one)
+    E("ValidateRect", user_two_args_one)
+    E("IsIconic", user_one_arg_zero)
+    E("ShowCursor", user_one_arg_one)
+    E("SetCursor", user_one_arg_zero)
 #undef E
 #else
     (void)name;
