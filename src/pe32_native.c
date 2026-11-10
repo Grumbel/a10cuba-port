@@ -15,6 +15,7 @@
 #include "pe32_link.h"
 #include "pe32_win32.h"
 #include "pe32_heap.h"
+#include "pe32_dsound.h"
 #include "pe32_proc.h"
 #include "pe32_winmm.h"
 #include "pe32_io.h"
@@ -796,7 +797,8 @@ static void dump_frame(const struct pe32_ddraw_frame *frame)
 /* SDL front end link: frames go out on frame_fd as {magic, width, height,
  * palette[256*4], pixels[width*height]}; input records {type, a, b, 0} arrive
  * on the non-blocking input_fd. */
-static s32 frame_fd = -1, input_fd = -1;
+static s32 frame_fd = -1, input_fd = -1, audio_fd = -1;
+static u32 audio_last_ms, audio_carry;
 
 static void host_input_poll(void)
 {
@@ -809,6 +811,33 @@ static void host_input_poll(void)
         for (i = 0; i + 16 <= n; i += 16) {
             pe32_user_input_event(rec[i / 4], rec[i / 4 + 1], rec[i / 4 + 2]);
         }
+    }
+}
+
+/* Mix DirectSound buffers for the time elapsed since the last frame and hand
+ * the PCM (stereo S16, 44100 Hz) to the host. The fd is non-blocking: if the
+ * host falls behind, the chunk is dropped rather than stalling the game. */
+static void audio_pump(void)
+{
+    static short chunk[8192 * 2];
+    u32 now = monotonic_milliseconds(), elapsed, owed, frames;
+    elapsed = audio_last_ms ? now - audio_last_ms : 0;
+    audio_last_ms = now;
+    if (elapsed > 200) {
+        elapsed = 200;
+    }
+    owed = elapsed * (PE32_DSOUND_RATE / 100) + audio_carry;
+    frames = owed / 10;
+    audio_carry = owed % 10;
+    if (frames > 8192) {
+        frames = 8192;
+    }
+    if (!frames) {
+        return;
+    }
+    pe32_dsound_mix(chunk, frames);
+    if (audio_fd >= 0) {
+        syscall3(SYS_WRITE, (u32)audio_fd, (u32)chunk, frames * 4);
     }
 }
 
@@ -827,6 +856,7 @@ static void host_present(const struct pe32_ddraw_frame *frame)
     for (y = 0; y < frame->height; y++) {
         write_all(frame_fd, frame->pixels + y * frame->pitch, frame->width);
     }
+    audio_pump();
     host_input_poll();
 }
 
@@ -861,7 +891,7 @@ int pe32_main(int argc, char **argv)
     pe32_io_set_stat_backend(stat_game_fd);
     pe32_io_set_directory_backend(open_game_directory, next_game_directory);
     if (argc < 2 || argc > 12) {
-        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM] [--frame-fd N] [--input-fd N]\n");
+        print_error("Usage: a10-pe32-native IMAGE [DLL] [--link] [--run-entry] [--auto-accept] [--dump-frame PPM] [--frame-fd N] [--input-fd N] [--audio-fd N]\n");
         return 2;
     }
     for (i = 1; i < argc; ++i) {
@@ -876,6 +906,8 @@ int pe32_main(int argc, char **argv)
         } else if (strings_equal(argv[i], "--frame-fd") && i + 1 < argc) {
             frame_fd = (s32)parse_number(argv[++i]);
             pe32_ddraw_set_present(host_present);
+        } else if (strings_equal(argv[i], "--audio-fd") && i + 1 < argc) {
+            audio_fd = (s32)parse_number(argv[++i]);
         } else if (strings_equal(argv[i], "--input-fd") && i + 1 < argc) {
             input_fd = (s32)parse_number(argv[++i]);
             pe32_user_set_input_poll(host_input_poll);
@@ -918,6 +950,7 @@ int pe32_main(int argc, char **argv)
         }
     }
     if (execute) {
+        host_input_poll(); /* learn about gamepads before the game reads its prefs */
         int (*entry_point)(void);
         int result;
         for (i = 0; i < module_count; ++i) {

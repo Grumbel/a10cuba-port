@@ -14,6 +14,7 @@ void pe32_winmm_set_clock(pe32_winmm_clock_fn clock);
  * "unplugged" until the host announces a gamepad. */
 enum { PE32_WINMM_AXIS = 4, PE32_WINMM_BUTTON = 5, PE32_WINMM_PRESENT = 6 };
 void pe32_winmm_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b);
+int pe32_winmm_joystick_present(void);
 
 /* WINMM subset imported by the EXE. PlaySound reports success without audio. */
 pe32_u32 PE32_WINAPI pe32_win32_time_get_time(void);

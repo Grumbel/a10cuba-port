@@ -42,6 +42,8 @@ void pe32_winmm_input_event(pe32_u32 type, pe32_u32 a, pe32_u32 b)
     }
 }
 
+int pe32_winmm_joystick_present(void) { return joy_present; }
+
 static pe32_u32 joy_check(pe32_u32 id)
 {
     pe32_user_poll_input();

@@ -199,7 +199,8 @@ int main(int argc, char **argv)
     const char *game_dir = getenv("A10_CUBA_DATA_DIR");
     const char *snapshot = NULL;
     int use_qemu = 1, max_frames = 0, scale = 2, frames = 0, status = 1;
-    int frame_pipe[2], input_pipe[2];
+    int frame_pipe[2], input_pipe[2], audio_pipe[2];
+    SDL_AudioStream *audio = NULL;
     pid_t child;
     struct pad_state pad = {0};
     SDL_Window *window = NULL;
@@ -222,7 +223,8 @@ int main(int argc, char **argv)
     }
     if (scale < 1) scale = 1;
 
-    if (pipe(frame_pipe) < 0 || pipe2(input_pipe, O_NONBLOCK) < 0) {
+    if (pipe(frame_pipe) < 0 || pipe2(input_pipe, O_NONBLOCK) < 0 ||
+        pipe2(audio_pipe, O_NONBLOCK) < 0) {
         perror("pipe");
         return 1;
     }
@@ -234,41 +236,65 @@ int main(int argc, char **argv)
         moved = fcntl(input_pipe[i], F_DUPFD, 10);
         close(input_pipe[i]);
         input_pipe[i] = moved;
+        moved = fcntl(audio_pipe[i], F_DUPFD, 10);
+        close(audio_pipe[i]);
+        audio_pipe[i] = moved;
     }
     signal(SIGPIPE, SIG_IGN);
+    /* Announce an existing gamepad before the runner starts: the game reads
+     * its joystick preference during startup. */
+    if (SDL_Init(SDL_INIT_GAMEPAD)) {
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&count);
+        if (ids && count > 0) send_input(input_pipe[1], INPUT_JOY_PRESENT, 1, 0);
+        SDL_free(ids);
+    }
     child = fork();
     if (child < 0) {
         perror("fork");
         return 1;
     }
     if (child == 0) {
-        char exe[4096], dll[4096], fd_out[16], fd_in[16];
+        char exe[4096], dll[4096], fd_out[16], fd_in[16], fd_audio[16];
         /* The runner side of the input pipe must stay blocking-agnostic. */
         dup2(frame_pipe[1], 3);
         dup2(input_pipe[0], 4);
         close(frame_pipe[0]); close(frame_pipe[1]);
         close(input_pipe[0]); close(input_pipe[1]);
+        dup2(audio_pipe[1], 5);
+        close(audio_pipe[0]); close(audio_pipe[1]);
         snprintf(exe, sizeof exe, "%s/A10Cuba.exe", game_dir);
         snprintf(dll, sizeof dll, "%s/A10Sim.dll", game_dir);
         snprintf(fd_out, sizeof fd_out, "3");
         snprintf(fd_in, sizeof fd_in, "4");
+        snprintf(fd_audio, sizeof fd_audio, "5");
         if (use_qemu) {
             execlp("qemu-i386", "qemu-i386", runner, exe, dll, "--run-entry",
                    "--auto-accept", "--frame-fd", fd_out, "--input-fd", fd_in,
-                   (char *)NULL);
+                   "--audio-fd", fd_audio, (char *)NULL);
         } else {
             execl(runner, runner, exe, dll, "--run-entry", "--auto-accept",
-                  "--frame-fd", fd_out, "--input-fd", fd_in, (char *)NULL);
+                  "--frame-fd", fd_out, "--input-fd", fd_in,
+                  "--audio-fd", fd_audio, (char *)NULL);
         }
         perror("exec runner");
         _exit(127);
     }
     close(frame_pipe[1]);
     close(input_pipe[0]);
+    close(audio_pipe[1]);
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         goto done;
+    }
+    {
+        /* Audio is optional: without a device the game simply runs silent. */
+        SDL_AudioSpec spec = { SDL_AUDIO_S16, 2, 44100 };
+        audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
+                                          NULL, NULL);
+        if (audio) SDL_ResumeAudioStreamDevice(audio);
+        else fprintf(stderr, "sdl_host: no audio: %s\n", SDL_GetError());
     }
     pad.input_fd = input_pipe[1];
     {
@@ -317,6 +343,15 @@ int main(int argc, char **argv)
                     send_input(input_pipe[1], INPUT_BUTTON, vk,
                                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
                 }
+            }
+        }
+        for (;;) {
+            unsigned char pcm[16384];
+            ssize_t got = read(audio_pipe[0], pcm, sizeof pcm);
+            if (got <= 0) break;
+            /* Keep latency bounded if the runner outpaces the device. */
+            if (audio && SDL_GetAudioStreamQueued(audio) < 44100 * 4 / 2) {
+                SDL_PutAudioStreamData(audio, pcm, (int)got);
             }
         }
         if (!read_full(frame_pipe[0], header, sizeof header)) {
@@ -376,6 +411,7 @@ int main(int argc, char **argv)
         }
     }
 done:
+    if (audio) SDL_DestroyAudioStream(audio);
     if (pad.pad) SDL_CloseGamepad(pad.pad);
     kill(child, SIGTERM);
     waitpid(child, NULL, 0);

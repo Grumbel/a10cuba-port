@@ -4,6 +4,7 @@
 #include "pe32_sys.h"
 
 #include "pe32_sound_events.h"
+#include "pe32_winmm.h"
 
 enum {
     ERROR_SUCCESS = 0,
@@ -244,6 +245,20 @@ pe32_u32 PE32_WINAPI pe32_win32_reg_query_value_ex_a(
             }
             return ERROR_SUCCESS;
         }
+    }
+    /* The game ships with "Joystick" off; enable it when a gamepad exists. */
+    if (name && str_ieq(name, "Joystick") && pe32_winmm_joystick_present() &&
+        str_ieq(keys[k].path, "HKCU\\Software\\Parsoft\\A-10 Cuba\\Preferences\\Devices")) {
+        if (type) {
+            *type = 4;
+        }
+        if (data && size && *size >= 4) {
+            data[0] = 1; data[1] = data[2] = data[3] = 0;
+        }
+        if (size) {
+            *size = 4;
+        }
+        return ERROR_SUCCESS;
     }
     return ERROR_FILE_NOT_FOUND;
 }

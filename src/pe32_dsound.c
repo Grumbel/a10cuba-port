@@ -21,9 +21,14 @@ struct buffer {
     pe32_u32 vtbl;
     unsigned char *data;
     pe32_u32 bytes, flags, position, volume, frequency, playing, looping, used;
+    pe32_u32 frame, frac;
+    int pan;
     unsigned char format[18];
 };
 
+enum { MIX_RATE = 44100 };
+
+static pe32_u32 block_align(const struct buffer *b);
 static pe32_u32 vtable_ds[11], vtable_buffer[21];
 static struct dsound ds_object;
 static struct buffer buffers[MAX_BUFFERS];
@@ -146,6 +151,9 @@ static pe32_u32 PE32_WINAPI ds_duplicate(A self, A src, A *out)
         b->data[i] = s->data[i];
     }
     b->frequency = s->frequency;
+    for (i = 0; i < 18; i++) {
+        b->format[i] = s->format[i];
+    }
     *out = (A)(unsigned long)b;
     return DS_OK;
 }
@@ -173,6 +181,97 @@ static pe32_u32 PE32_WINAPI ds_set_speaker_config(A self, A config)
 static pe32_u32 PE32_WINAPI ds_initialize(A self, A guid) { return DS_OK; }
 
 /* Buffers */
+
+/* ---- Software mixer: stereo S16 at MIX_RATE, driven by the host clock. ---- */
+
+static pe32_u32 block_align(const struct buffer *b)
+{
+    pe32_u32 ch = b->format[2] | (pe32_u32)b->format[3] << 8;
+    pe32_u32 bits = b->format[14] | (pe32_u32)b->format[15] << 8;
+    ch = ch ? ch : 1;
+    bits = bits ? bits : 16;
+    return ch * (bits / 8 ? bits / 8 : 1);
+}
+
+/* 2^(-k/8) in 16.16, then shifted by whole 6.02 dB steps. */
+static pe32_u32 gain_from_millibel(int mb)
+{
+    static const pe32_u32 frac[8] = {65536, 60097, 55109, 50535,
+                                     46341, 42494, 38968, 35734};
+    pe32_u32 steps, k;
+    if (mb >= 0) {
+        return 65536;
+    }
+    if (mb <= -10000) {
+        return 0;
+    }
+    steps = (pe32_u32)(-mb) / 602;
+    k = ((pe32_u32)(-mb) % 602) * 8 / 602;
+    return frac[k] >> steps;
+}
+
+static int sample_at(const struct buffer *b, pe32_u32 frame, pe32_u32 channel)
+{
+    pe32_u32 ch = b->format[2] | (pe32_u32)b->format[3] << 8;
+    pe32_u32 bits = b->format[14] | (pe32_u32)b->format[15] << 8;
+    const unsigned char *p;
+    ch = ch ? ch : 1;
+    bits = bits ? bits : 16;
+    if (channel >= ch) {
+        channel = ch - 1;
+    }
+    if (bits == 8) {
+        p = b->data + frame * ch + channel;
+        return ((int)*p - 128) << 8;
+    }
+    p = b->data + (frame * ch + channel) * 2;
+    return (short)(p[0] | p[1] << 8);
+}
+
+unsigned pe32_dsound_mix(short *out, unsigned frames)
+{
+    unsigned i, n;
+    for (i = 0; i < frames * 2; i++) {
+        out[i] = 0;
+    }
+    for (n = 0; n < MAX_BUFFERS; n++) {
+        struct buffer *b = &buffers[n];
+        pe32_u32 align, total, step, left, right;
+        if (!b->used || !b->playing || (b->flags & DSBCAPS_PRIMARYBUFFER)) {
+            continue;
+        }
+        align = block_align(b);
+        total = b->bytes / align;
+        if (!total) {
+            continue;
+        }
+        step = b->frequency * 4096u / MIX_RATE;
+        left = gain_from_millibel((int)b->volume - (b->pan > 0 ? b->pan : 0));
+        right = gain_from_millibel((int)b->volume - (b->pan < 0 ? -b->pan : 0));
+        for (i = 0; i < frames && b->playing; i++) {
+            int l = sample_at(b, b->frame, 0), r = sample_at(b, b->frame, 1);
+            int o = (int)i * 2;
+            int mixed_l = out[o] + (int)(((long long)l * left) >> 16);
+            int mixed_r = out[o + 1] + (int)(((long long)r * right) >> 16);
+            out[o] = (short)(mixed_l > 32767 ? 32767 : mixed_l < -32768 ? -32768 : mixed_l);
+            out[o + 1] = (short)(mixed_r > 32767 ? 32767 : mixed_r < -32768 ? -32768 : mixed_r);
+            b->frac += step;
+            b->frame += b->frac >> 12;
+            b->frac &= 4095;
+            if (b->frame >= total) {
+                if (b->looping) {
+                    b->frame %= total;
+                } else {
+                    b->frame = total;
+                    b->playing = 0;
+                }
+            }
+        }
+        b->position = b->frame * align;
+    }
+    return frames;
+}
+
 static pe32_u32 PE32_WINAPI b_get_caps(A self, unsigned char *caps)
 {
     struct buffer *b = (struct buffer *)(unsigned long)self;
@@ -214,7 +313,7 @@ static pe32_u32 PE32_WINAPI b_get_volume(A self, A *v)
 
 static pe32_u32 PE32_WINAPI b_get_pan(A self, A *p)
 {
-    if (p) *p = 0;
+    if (p) *p = (A)((struct buffer *)(unsigned long)self)->pan;
     return DS_OK;
 }
 
@@ -270,12 +369,20 @@ static pe32_u32 PE32_WINAPI b_play(A self, A reserved, A priority, A flags)
     struct buffer *b = (struct buffer *)(unsigned long)self;
     b->playing = 1;
     b->looping = (flags & 1) != 0;
+    if (!b->looping && b->position >= b->bytes) {
+        b->position = 0;
+        b->frame = b->frac = 0;
+    }
     return DS_OK;
 }
 
 static pe32_u32 PE32_WINAPI b_set_current_position(A self, A pos)
 {
-    ((struct buffer *)(unsigned long)self)->position = pos;
+    struct buffer *b = (struct buffer *)(unsigned long)self;
+    pe32_u32 align = block_align(b);
+    b->position = pos;
+    b->frame = pos / align;
+    b->frac = 0;
     return DS_OK;
 }
 
@@ -295,7 +402,11 @@ static pe32_u32 PE32_WINAPI b_set_volume(A self, A v)
     return DS_OK;
 }
 
-static pe32_u32 PE32_WINAPI b_set_pan(A self, A p) { return DS_OK; }
+static pe32_u32 PE32_WINAPI b_set_pan(A self, A p)
+{
+    ((struct buffer *)(unsigned long)self)->pan = (int)p;
+    return DS_OK;
+}
 
 static pe32_u32 PE32_WINAPI b_set_frequency(A self, A f)
 {

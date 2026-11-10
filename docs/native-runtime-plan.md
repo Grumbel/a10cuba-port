@@ -343,6 +343,6 @@ Implemented for this: real SEH dispatch (`RaiseException`/`RtlUnwind` walk the
 `A10Sim.dll`, `wsprintfA`, DLGTEMPLATEEX parsing, and input state behind
 `GetAsyncKeyState`/`GetKeyState`/`GetCursorPos`.
 
-Known gaps: audio is silent, DirectPlay calls are stubs (joysticks and the
-registry are implemented, see docs/gamepad.md), hardware
+Known gaps: DirectPlay calls are stubs (joysticks, the registry and audio
+mixing are implemented, see docs/gamepad.md), hardware
 exceptions are not delivered to SEH handlers, and the dialog UI is auto-driven.

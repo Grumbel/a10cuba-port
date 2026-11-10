@@ -41,4 +41,17 @@ The game finds its sounds through
 in-memory registry (`src/pe32_sys.c`) seeded from `share/sound-events.txt`
 (via `scripts/gen-sound-events.sh` -> `src/pe32_sound_events.h`) with values
 like `Media\EngineA-10.wav`. Changes made by the game last only for the
-session. Audio output is still not implemented (DirectSound is silent).
+session. When a gamepad is present the `Preferences\\Devices\\Joystick`
+default is 1 (the game ships with it off), so the stick is used at startup.
+
+## Audio
+
+`src/pe32_dsound.c` mixes the game's DirectSound buffers in software (volume,
+pan, frequency, looping, play positions) to stereo S16 at 44100 Hz. The runner
+mixes for the wall-clock time elapsed since the previous presented frame and
+writes the PCM to the non-blocking `--audio-fd` pipe; the host feeds it to an
+SDL audio stream (no audio device just means silence). The mixer is tested by
+`tests/test_pe32_dsound.c` (run under qemu-i386 via `tests/run_dsound_test.sh`).
+Mixing advances with presented frames, so audio is chunked per frame. The splash
+music is the only sound the game loads before a mission; other sounds were not
+exercised from the cockpit yet. DirectPlay is still stubbed.
